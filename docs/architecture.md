@@ -72,8 +72,9 @@ personal-ai-assistant/
 ## 4. Development Milestones
 
 - [x] **Milestone 1**: Project initialization, directory structure, environment configuration, root gitignore, and verification of both Mobile & Backend skeletons.
-- [ ] **Milestone 2**: Database setup & connection (MongoDB Atlas M0 Free Cluster, Mongoose schema for persistent user memory).
-- [ ] **Milestone 3**: Gemini AI integration on the backend (Free API key, prompt engineering, context injection with memory).
-- [ ] **Milestone 4**: Mobile UI connection to backend (Chat interface, message history, live backend health status).
-- [ ] **Milestone 5**: Voice input (Speech-to-Text) and spoken responses (Text-to-Speech) using free on-device capabilities.
-- [ ] **Milestone 6**: Task management and local scheduled notifications for reminders and deadlines.
+- [x] **Milestone 2**: Mobile User Interface (Dashboard, AI Chat, Tasks & Reminders, Personal Memories, Settings, accessible design system, and mock interaction).
+- [ ] **Milestone 3**: Database setup & connection (MongoDB Atlas M0 Free Cluster, Mongoose schema for persistent user memory and tasks).
+- [ ] **Milestone 4**: Gemini AI integration on the backend (Free API key, prompt engineering, context injection with persistent memory).
+- [ ] **Milestone 5**: Full frontend-to-backend connection (Real-time AI Chat, live task syncing, persistent memory queries).
+- [ ] **Milestone 6**: Voice input (Speech-to-Text) and spoken responses (Text-to-Speech) using free on-device capabilities.
+- [ ] **Milestone 7**: Task management and local scheduled notifications for reminders and deadlines.
