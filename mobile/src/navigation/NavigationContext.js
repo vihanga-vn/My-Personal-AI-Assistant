@@ -1,14 +1,12 @@
 import React, { createContext, useContext, useState } from 'react';
 
 const NavigationContext = createContext({
-  currentTab: 'dashboard',
+  currentTab: 'vox',
   navigate: () => {},
-  pendingTaskCount: 0,
-  unreadCount: 0,
 });
 
 export const NavigationProvider = ({ children }) => {
-  const [currentTab, setCurrentTab] = useState('dashboard');
+  const [currentTab, setCurrentTab] = useState('vox');
 
   const navigate = (tabName) => {
     setCurrentTab(tabName);

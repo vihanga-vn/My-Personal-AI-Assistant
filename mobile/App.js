@@ -5,35 +5,32 @@ import { colors } from './src/theme/colors';
 import { NavigationProvider, useNavigation } from './src/navigation/NavigationContext';
 import { TabBar } from './src/components/TabBar';
 
+import { VoxScreen } from './src/screens/VoxScreen';
 import { DashboardScreen } from './src/screens/DashboardScreen';
+import { UpcomingEventsScreen } from './src/screens/UpcomingEventsScreen';
 import { ChatScreen } from './src/screens/ChatScreen';
-import { TasksScreen } from './src/screens/TasksScreen';
-import { MemoriesScreen } from './src/screens/MemoriesScreen';
-import { SettingsScreen } from './src/screens/SettingsScreen';
 
 function MainApp() {
   const { currentTab } = useNavigation();
 
   const renderActiveScreen = () => {
     switch (currentTab) {
+      case 'vox':
+        return <VoxScreen />;
       case 'dashboard':
         return <DashboardScreen />;
+      case 'events':
+        return <UpcomingEventsScreen />;
       case 'chat':
         return <ChatScreen />;
-      case 'tasks':
-        return <TasksScreen />;
-      case 'memories':
-        return <MemoriesScreen />;
-      case 'settings':
-        return <SettingsScreen />;
       default:
-        return <DashboardScreen />;
+        return <VoxScreen />;
     }
   };
 
   return (
     <SafeAreaView style={styles.safeArea}>
-      <StatusBar style="light" backgroundColor={colors.background} />
+      <StatusBar style="light" backgroundColor="#05070a" />
       <View style={styles.screenContainer}>
         {renderActiveScreen()}
       </View>
@@ -53,11 +50,11 @@ export default function App() {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: colors.background,
+    backgroundColor: '#05070a',
     paddingTop: Platform.OS === 'android' ? RNStatusBar.currentHeight : 0,
   },
   screenContainer: {
     flex: 1,
-    backgroundColor: colors.background,
+    backgroundColor: '#05070a',
   },
 });

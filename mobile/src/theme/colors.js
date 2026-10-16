@@ -38,4 +38,14 @@ export const colors = {
   // Chat Bubble specifics
   userBubble: '#4f46e5',
   assistantBubble: '#1b253b',
+
+  // Vox AI Specific Aesthetics (Coral/Orange Soundwave Glow)
+  voxGlow: '#ff4d3a',
+  voxGlowSecondary: '#ff6b4a',
+  voxDarkGlow: 'rgba(255, 77, 58, 0.25)',
+  voxRingOuter: 'rgba(255, 77, 58, 0.15)',
+  voxRingMiddle: 'rgba(255, 77, 58, 0.35)',
+  voxRingInner: 'rgba(255, 77, 58, 0.70)',
+  voxSurface: '#12141a',
+  voxBorder: 'rgba(255, 77, 58, 0.25)',
 };

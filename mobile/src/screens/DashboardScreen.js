@@ -1,146 +1,164 @@
-import React, { useState } from 'react';
-import { StyleSheet, View, Text, ScrollView, TouchableOpacity } from 'react-native';
+import React from 'react';
+import {
+  StyleSheet,
+  View,
+  Text,
+  ScrollView,
+  TouchableOpacity,
+  Platform,
+} from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { colors } from '../theme/colors';
 import { typography } from '../theme/typography';
 import { spacing, radii } from '../theme/spacing';
-import { Header } from '../components/Header';
-import { StatBadge } from '../components/StatBadge';
-import { TaskCard } from '../components/TaskCard';
-import { mockTasks, mockUpcomingDeadlines, mockMemories, mockUser } from '../data/mockData';
 import { useNavigation } from '../navigation/NavigationContext';
+import { mockUpcomingEvents, EVENT_CATEGORIES } from '../data/mockData';
 
 export const DashboardScreen = () => {
   const { navigate } = useNavigation();
-  const [tasks, setTasks] = useState(mockTasks);
-
-  const toggleTask = (id) => {
-    setTasks((prev) =>
-      prev.map((t) => (t.id === id ? { ...t, completed: !t.completed } : t))
-    );
-  };
-
-  const todayTasks = tasks.filter((t) => t.deadlineDate === 'Today');
-  const pendingTodayCount = todayTasks.filter((t) => !t.completed).length;
+  const nextEvent = mockUpcomingEvents[0];
 
   return (
     <View style={styles.container}>
-      <Header
-        subtitle="Good day"
-        title={`Hello, ${mockUser.name}`}
-      />
+      {/* Header */}
+      <View style={styles.header}>
+        <TouchableOpacity
+          style={styles.backButton}
+          onPress={() => navigate('vox')}
+          activeOpacity={0.7}
+        >
+          <Ionicons name="chevron-back" size={20} color="#ff6b5b" />
+          <Text style={styles.backButtonText}>Vox AI</Text>
+        </TouchableOpacity>
+
+        <Text style={styles.headerTitle}>Dashboard</Text>
+
+        <View style={styles.headerSpacer} />
+      </View>
 
       <ScrollView
         style={styles.scrollView}
         contentContainerStyle={styles.content}
         showsVerticalScrollIndicator={false}
       >
-        {/* Quick Voice / Chat Prompt Banner */}
-        <TouchableOpacity
-          style={styles.aiBanner}
-          onPress={() => navigate('chat')}
-          activeOpacity={0.85}
-        >
-          <View style={styles.aiBannerIcon}>
-            <Ionicons name="sparkles" size={24} color={colors.accent} />
-          </View>
-          <View style={styles.aiBannerText}>
-            <Text style={styles.aiBannerTitle}>Ask {mockUser.assistantName}</Text>
-            <Text style={styles.aiBannerSubtitle}>
-              Tap to speak or chat about tasks, memories & schedule
-            </Text>
-          </View>
-          <Ionicons name="chevron-forward" size={20} color={colors.textSecondary} />
-        </TouchableOpacity>
-
-        {/* Stats Row */}
-        <View style={styles.statsRow}>
-          <StatBadge
-            icon="checkbox-outline"
-            count={pendingTodayCount}
-            label="Today's Tasks"
-            accentColor={colors.primary}
-            onPress={() => navigate('tasks')}
-          />
-          <StatBadge
-            icon="alarm-outline"
-            count={mockUpcomingDeadlines.length}
-            label="Deadlines"
-            accentColor={colors.warning}
-            onPress={() => navigate('tasks')}
-          />
-          <StatBadge
-            icon="bookmark-outline"
-            count={mockMemories.length}
-            label="Memories"
-            accentColor={colors.accent}
-            onPress={() => navigate('memories')}
-          />
-        </View>
-
-        {/* Today's Tasks Section */}
-        <View style={styles.sectionHeader}>
-          <View style={styles.sectionTitleRow}>
-            <Text style={styles.sectionTitle}>Today's Schedule</Text>
-            <View style={styles.countBadge}>
-              <Text style={styles.countBadgeText}>{pendingTodayCount} remaining</Text>
-            </View>
-          </View>
-          <TouchableOpacity onPress={() => navigate('tasks')} activeOpacity={0.7}>
-            <Text style={styles.viewAllText}>View all</Text>
-          </TouchableOpacity>
-        </View>
-
-        {todayTasks.slice(0, 3).map((task) => (
-          <TaskCard key={task.id} task={task} onToggleComplete={toggleTask} />
-        ))}
-
-        {/* Upcoming Deadlines Section */}
-        <View style={[styles.sectionHeader, { marginTop: spacing.lg }]}>
-          <View style={styles.sectionTitleRow}>
-            <Text style={styles.sectionTitle}>Upcoming Deadlines</Text>
-          </View>
-        </View>
-
-        <View style={styles.deadlinesCard}>
-          {mockUpcomingDeadlines.map((item, idx) => (
-            <View
-              key={item.id}
-              style={[
-                styles.deadlineItem,
-                idx === mockUpcomingDeadlines.length - 1 && styles.deadlineItemLast,
-              ]}
+        {/* Categories Breakdown Section with Counts */}
+        <View style={styles.section}>
+          <View style={styles.sectionHeaderRow}>
+            <Text style={styles.sectionLabel}>Event Categories</Text>
+            <TouchableOpacity
+              onPress={() => navigate('events')}
+              activeOpacity={0.7}
             >
-              <View style={[styles.deadlineDot, { backgroundColor: item.color }]} />
-              <View style={styles.deadlineInfo}>
-                <Text style={styles.deadlineTitle}>{item.title}</Text>
-                <Text style={styles.deadlineDate}>{item.date}</Text>
-              </View>
-              <View style={[styles.deadlineTag, { backgroundColor: `${item.color}20` }]}>
-                <Text style={[styles.deadlineTagText, { color: item.color }]}>
-                  {item.tag}
-                </Text>
-              </View>
-            </View>
-          ))}
-        </View>
-
-        {/* Assistant Memory Insight */}
-        <View style={[styles.sectionHeader, { marginTop: spacing.lg }]}>
-          <Text style={styles.sectionTitle}>Assistant Memory Highlight</Text>
-          <TouchableOpacity onPress={() => navigate('memories')} activeOpacity={0.7}>
-            <Text style={styles.viewAllText}>All memories</Text>
-          </TouchableOpacity>
-        </View>
-
-        <View style={styles.memoryHighlightCard}>
-          <View style={styles.memoryHighlightHeader}>
-            <Ionicons name="bulb-outline" size={18} color="#fbbf24" />
-            <Text style={styles.memoryHighlightLabel}>Recognized Preference</Text>
+              <Text style={styles.viewAllText}>
+                {mockUpcomingEvents.length} Total Events
+              </Text>
+            </TouchableOpacity>
           </View>
-          <Text style={styles.memoryHighlightTitle}>{mockMemories[0].title}</Text>
-          <Text style={styles.memoryHighlightDetail}>{mockMemories[0].detail}</Text>
+
+          <View style={styles.categoryGrid}>
+            {EVENT_CATEGORIES.map((cat) => {
+              const count = mockUpcomingEvents.filter(
+                (e) => e.category.toLowerCase() === cat.key.toLowerCase()
+              ).length;
+
+              return (
+                <TouchableOpacity
+                  key={cat.key}
+                  style={[
+                    styles.categoryCard,
+                    {
+                      borderColor: cat.borderColor,
+                      borderTopColor: cat.color,
+                      borderTopWidth: 3.5,
+                      shadowColor: cat.color,
+                    },
+                  ]}
+                  onPress={() => navigate('events')}
+                  activeOpacity={0.75}
+                >
+                  <View style={styles.categoryCardTop}>
+                    <View
+                      style={[
+                        styles.categoryIconWrap,
+                        {
+                          backgroundColor: cat.bgColor,
+                          borderColor: cat.borderColor,
+                        },
+                      ]}
+                    >
+                      <Ionicons name={cat.icon} size={20} color={cat.color} />
+                    </View>
+                    <View
+                      style={[
+                        styles.categoryBadgePill,
+                        {
+                          backgroundColor: cat.bgColor,
+                          borderColor: cat.borderColor,
+                        },
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.categoryBadgeText,
+                          { color: cat.color },
+                        ]}
+                      >
+                        {count}
+                      </Text>
+                    </View>
+                  </View>
+
+                  <Text style={styles.categoryTitle}>{cat.label}</Text>
+
+                  <Text
+                    style={[styles.categoryCountLabel, { color: cat.color }]}
+                  >
+                    {count} {count === 1 ? 'event' : 'events'}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
         </View>
+
+        {/* Next Up Hero Event */}
+        {nextEvent && (
+          <View style={styles.section}>
+            <Text style={styles.sectionLabel}>Next Up</Text>
+            <TouchableOpacity
+              style={styles.nextEventCard}
+              onPress={() => navigate('events')}
+              activeOpacity={0.8}
+            >
+              <View style={styles.nextEventHeader}>
+                <View style={styles.nextBadge}>
+                  <View style={styles.dot} />
+                  <Text style={styles.nextBadgeText}>Priority</Text>
+                </View>
+                <Text style={styles.nextEventTime}>{nextEvent.time}</Text>
+              </View>
+
+              <Text style={styles.nextEventTitle}>{nextEvent.title}</Text>
+
+              <View style={styles.nextEventFooter}>
+                <View style={styles.locationRow}>
+                  <Ionicons name="location-outline" size={14} color="#9ca3af" />
+                  <Text style={styles.locationText}>{nextEvent.location}</Text>
+                </View>
+                <View
+                  style={[
+                    styles.tagBadge,
+                    { backgroundColor: `${nextEvent.tagColor}22` },
+                  ]}
+                >
+                  <Text style={[styles.tagText, { color: nextEvent.tagColor }]}>
+                    {nextEvent.category}
+                  </Text>
+                </View>
+              </View>
+            </TouchableOpacity>
+          </View>
+        )}
       </ScrollView>
     </View>
   );
@@ -149,160 +167,183 @@ export const DashboardScreen = () => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: colors.background,
+    backgroundColor: '#05070a',
+  },
+  header: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: spacing.lg,
+    paddingTop: 4,
+    paddingBottom: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255, 255, 255, 0.08)',
+  },
+  backButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 4,
+    paddingRight: 8,
+    gap: 4,
+  },
+  backButtonText: {
+    color: '#ff6b5b',
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  headerTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#ffffff',
+  },
+  headerSpacer: {
+    width: 60,
   },
   scrollView: {
     flex: 1,
   },
   content: {
-    padding: spacing.xl,
-    paddingBottom: spacing.xxxl,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.lg,
+    gap: 22,
   },
-  aiBanner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: colors.surface,
-    padding: spacing.md,
-    borderRadius: radii.xl,
-    marginBottom: spacing.lg,
-    borderWidth: 1,
-    borderColor: colors.borderLight,
+  section: {
+    gap: 12,
   },
-  aiBannerIcon: {
-    width: 44,
-    height: 44,
-    borderRadius: radii.lg,
-    backgroundColor: colors.accentGlow,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: spacing.md,
+  sectionLabel: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#9ca3af',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
   },
-  aiBannerText: {
-    flex: 1,
-  },
-  aiBannerTitle: {
-    fontSize: typography.sizes.base,
-    fontWeight: typography.weights.bold,
-    color: colors.textPrimary,
-    marginBottom: 2,
-  },
-  aiBannerSubtitle: {
-    fontSize: typography.sizes.xs,
-    color: colors.textSecondary,
-    lineHeight: 16,
-  },
-  statsRow: {
-    flexDirection: 'row',
-    gap: spacing.sm,
-    marginBottom: spacing.xl,
-  },
-  sectionHeader: {
+  sectionHeaderRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: spacing.md,
-  },
-  sectionTitleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
-  },
-  sectionTitle: {
-    fontSize: typography.sizes.lg,
-    fontWeight: typography.weights.bold,
-    color: colors.textPrimary,
-  },
-  countBadge: {
-    backgroundColor: colors.surfaceHighlight,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 2,
-    borderRadius: radii.full,
-  },
-  countBadgeText: {
-    fontSize: typography.sizes.xs - 1,
-    color: colors.accent,
-    fontWeight: typography.weights.semibold,
   },
   viewAllText: {
-    fontSize: typography.sizes.sm,
-    color: colors.primaryLight,
-    fontWeight: typography.weights.semibold,
+    fontSize: 13,
+    color: '#ff6b5b',
+    fontWeight: '600',
   },
-  deadlinesCard: {
-    backgroundColor: colors.surface,
+  categoryGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+  },
+  categoryCard: {
+    width: '48%',
+    backgroundColor: '#131826',
     borderRadius: radii.lg,
     padding: spacing.md,
-    borderWidth: 1,
-    borderColor: colors.border,
+    borderWidth: 1.5,
+    justifyContent: 'space-between',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.35,
+    shadowRadius: 10,
+    elevation: 5,
   },
-  deadlineItem: {
+  categoryCardTop: {
     flexDirection: 'row',
+    justifyContent: 'space-between',
     alignItems: 'center',
-    paddingVertical: spacing.sm,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
+    marginBottom: 10,
   },
-  deadlineItemLast: {
-    borderBottomWidth: 0,
-    paddingBottom: 0,
+  categoryIconWrap: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  deadlineDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    marginRight: spacing.md,
-  },
-  deadlineInfo: {
-    flex: 1,
-  },
-  deadlineTitle: {
-    fontSize: typography.sizes.sm,
-    fontWeight: typography.weights.semibold,
-    color: colors.textPrimary,
-    marginBottom: 2,
-  },
-  deadlineDate: {
-    fontSize: typography.sizes.xs,
-    color: colors.textMuted,
-  },
-  deadlineTag: {
-    paddingHorizontal: spacing.sm,
+  categoryBadgePill: {
+    paddingHorizontal: 9,
     paddingVertical: 3,
-    borderRadius: radii.sm,
-  },
-  deadlineTagText: {
-    fontSize: typography.sizes.xs - 1,
-    fontWeight: typography.weights.bold,
-  },
-  memoryHighlightCard: {
-    backgroundColor: colors.surface,
-    borderRadius: radii.lg,
-    padding: spacing.md,
-    borderLeftWidth: 3,
-    borderLeftColor: '#fbbf24',
+    borderRadius: radii.full,
     borderWidth: 1,
-    borderColor: colors.border,
   },
-  memoryHighlightHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    marginBottom: 6,
+  categoryBadgeText: {
+    fontSize: 12,
+    fontWeight: '800',
   },
-  memoryHighlightLabel: {
-    fontSize: typography.sizes.xs,
-    color: '#fbbf24',
-    fontWeight: typography.weights.semibold,
-  },
-  memoryHighlightTitle: {
-    fontSize: typography.sizes.base,
-    fontWeight: typography.weights.semibold,
-    color: colors.textPrimary,
+  categoryTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#ffffff',
     marginBottom: 4,
   },
-  memoryHighlightDetail: {
-    fontSize: typography.sizes.sm,
-    color: colors.textSecondary,
-    lineHeight: 18,
+  categoryCountLabel: {
+    fontSize: 13,
+    fontWeight: '700',
+    letterSpacing: 0.3,
+  },
+  nextEventCard: {
+    backgroundColor: '#11141c',
+    borderRadius: radii.lg,
+    padding: spacing.md,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 77, 58, 0.4)',
+  },
+  nextEventHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  nextBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 77, 58, 0.2)',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: radii.full,
+    gap: 5,
+  },
+  dot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#ff4d3a',
+  },
+  nextBadgeText: {
+    color: '#ff6b5b',
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  nextEventTime: {
+    color: '#f3f4f6',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  nextEventTitle: {
+    fontSize: 17,
+    fontWeight: '700',
+    color: '#ffffff',
+    marginBottom: 12,
+  },
+  nextEventFooter: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  locationRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+  },
+  locationText: {
+    color: '#9ca3af',
+    fontSize: 12,
+  },
+  tagBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+  },
+  tagText: {
+    fontSize: 11,
+    fontWeight: '700',
   },
 });
