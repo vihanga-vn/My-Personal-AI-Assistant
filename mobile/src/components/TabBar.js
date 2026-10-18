@@ -1,11 +1,11 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { StyleSheet, View, Text, TouchableOpacity, Platform } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { colors } from '../theme/colors';
 import { typography } from '../theme/typography';
 import { spacing, radii } from '../theme/spacing';
 import { useNavigation } from '../navigation/NavigationContext';
-import { mockUpcomingEvents } from '../data/mockData';
+import { getTasks, onTasksUpdated } from '../services/taskService';
 
 const TABS = [
   {
@@ -32,7 +32,28 @@ const TABS = [
 
 export const TabBar = () => {
   const { currentTab, navigate } = useNavigation();
-  const eventCount = mockUpcomingEvents.length;
+  const [eventCount, setEventCount] = useState(0);
+
+  useEffect(() => {
+    let isMounted = true;
+    const fetchBadgeCount = async () => {
+      try {
+        const data = await getTasks({ status: 'pending' });
+        if (isMounted && data && Array.isArray(data.tasks)) {
+          setEventCount(data.tasks.length);
+        }
+      } catch (_) {
+        // Silently retain current count on network hiccups
+      }
+    };
+
+    fetchBadgeCount();
+    const unsubscribe = onTasksUpdated(fetchBadgeCount);
+    return () => {
+      isMounted = false;
+      unsubscribe();
+    };
+  }, []);
 
   return (
     <View style={styles.wrapper}>
@@ -48,7 +69,7 @@ export const TabBar = () => {
               <TouchableOpacity
                 key={tab.key}
                 style={styles.centerTabButton}
-                onPress={() => navigate(tab.key)}
+                onPress={() => navigate(tab.key, { startVoice: true, triggerTime: Date.now() })}
                 activeOpacity={0.8}
                 accessibilityRole="tab"
                 accessibilityState={{ selected: isActive }}

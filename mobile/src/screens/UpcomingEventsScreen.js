@@ -1,10 +1,14 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   StyleSheet,
   View,
   Text,
   ScrollView,
   TouchableOpacity,
+  RefreshControl,
+  ActivityIndicator,
+  Modal,
+  Alert,
   Platform,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
@@ -12,28 +16,193 @@ import { colors } from '../theme/colors';
 import { typography } from '../theme/typography';
 import { spacing, radii } from '../theme/spacing';
 import { useNavigation } from '../navigation/NavigationContext';
-import { mockUpcomingEvents, EVENT_CATEGORIES } from '../data/mockData';
+import { EVENT_CATEGORIES } from '../data/mockData';
+import {
+  getTasks,
+  completeTask,
+  deleteTask,
+  rescheduleTask,
+  onTasksUpdated,
+} from '../services/taskService';
+import { cancelLocalReminder } from '../services/notificationService';
 
 export const UpcomingEventsScreen = () => {
   const { navigate } = useNavigation();
-  const [filter, setFilter] = useState('all');
-  const [events, setEvents] = useState(mockUpcomingEvents);
+  const [tasks, setTasks] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState(null);
 
-  const filteredEvents = events.filter((e) => {
-    if (filter === 'all') return true;
-    return e.category.toLowerCase() === filter.toLowerCase();
-  });
+  // Filters: category filter and status filter ('all', 'pending', 'completed')
+  const [selectedCategory, setSelectedCategory] = useState('all');
+  const [statusFilter, setStatusFilter] = useState('pending'); // 'pending' | 'completed' | 'all'
+
+  // Reschedule Modal state
+  const [rescheduleModalVisible, setRescheduleModalVisible] = useState(false);
+  const [taskToReschedule, setTaskToReschedule] = useState(null);
+  const [actionLoading, setActionLoading] = useState(false);
+
+  const fetchTasks = useCallback(async (isInitial = false) => {
+    if (isInitial) setLoading(true);
+    setError(null);
+    try {
+      const data = await getTasks({
+        status: statusFilter,
+        category: selectedCategory !== 'all' ? selectedCategory : undefined,
+      });
+
+      // Sort pending/upcoming tasks by due date/time ascending (earliest first, overdue at top, undated last)
+      const sorted = (data.tasks || []).slice().sort((a, b) => {
+        const getTaskTime = (t) => {
+          if (t.dueDate) {
+            const ms = new Date(t.dueDate).getTime();
+            if (!isNaN(ms)) return ms;
+          }
+          if (t.reminderTime) {
+            const ms = new Date(t.reminderTime).getTime();
+            if (!isNaN(ms)) return ms;
+          }
+          return Infinity;
+        };
+        const timeA = getTaskTime(a);
+        const timeB = getTaskTime(b);
+        if (timeA !== timeB) return timeA - timeB;
+        return new Date(a.createdAt || 0).getTime() - new Date(b.createdAt || 0).getTime();
+      });
+
+      setTasks(sorted);
+    } catch (err) {
+      console.error('[UpcomingEventsScreen] Fetch error:', err);
+      setError(err.message || 'Unable to connect to backend server.');
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, [statusFilter, selectedCategory]);
+
+  useEffect(() => {
+    fetchTasks(true);
+    // Listen for updates from ChatScreen or VoxScreen or other actions
+    const unsubscribe = onTasksUpdated(() => {
+      fetchTasks(false);
+    });
+    return unsubscribe;
+  }, [fetchTasks]);
+
+  const onRefresh = () => {
+    setRefreshing(true);
+    fetchTasks(false);
+  };
 
   const getCategoryDetails = (catName) => {
     return (
       EVENT_CATEGORIES.find(
-        (c) => c.key.toLowerCase() === catName.toLowerCase()
+        (c) => c.key.toLowerCase() === (catName || '').toLowerCase()
       ) || {
-        color: '#ff4d3a',
-        bgColor: 'rgba(255, 77, 58, 0.15)',
+        key: catName || 'Other',
+        label: catName || 'Other',
+        color: '#fde047',
+        bgColor: 'rgba(253, 224, 71, 0.22)',
+        borderColor: 'rgba(253, 224, 71, 0.55)',
         icon: 'calendar-outline',
       }
     );
+  };
+
+  // Handle Complete
+  const handleCompleteTask = async (task) => {
+    if (task.completed) return; // already completed
+    try {
+      setActionLoading(true);
+      if (task.notificationId) {
+        cancelLocalReminder(task.notificationId).catch(() => {});
+      }
+      await completeTask(task._id);
+      await fetchTasks(false);
+    } catch (err) {
+      Alert.alert('Complete Error', err.message || 'Failed to complete task.');
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  // Handle Delete
+  const handleDeleteTask = (task) => {
+    Alert.alert(
+      'Delete Task',
+      `Are you sure you want to delete "${task.title}"?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              setActionLoading(true);
+              if (task.notificationId) {
+                cancelLocalReminder(task.notificationId).catch(() => {});
+              }
+              await deleteTask(task._id);
+              await fetchTasks(false);
+            } catch (err) {
+              Alert.alert('Delete Error', err.message || 'Failed to delete task.');
+            } finally {
+              setActionLoading(false);
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  // Open Reschedule Modal
+  const openRescheduleModal = (task) => {
+    setTaskToReschedule(task);
+    setRescheduleModalVisible(true);
+  };
+
+  // Execute quick reschedule option
+  const handleApplyReschedule = async (offsetType) => {
+    if (!taskToReschedule) return;
+
+    const now = new Date();
+    let newDate = new Date();
+
+    switch (offsetType) {
+      case '1h':
+        newDate = new Date(now.getTime() + 60 * 60 * 1000);
+        break;
+      case 'tomorrow_9am':
+        newDate.setDate(newDate.getDate() + 1);
+        newDate.setHours(9, 0, 0, 0);
+        break;
+      case 'tomorrow_3pm':
+        newDate.setDate(newDate.getDate() + 1);
+        newDate.setHours(15, 0, 0, 0);
+        break;
+      case 'next_week':
+        newDate.setDate(newDate.getDate() + 7);
+        newDate.setHours(10, 0, 0, 0);
+        break;
+      default:
+        newDate = new Date(now.getTime() + 2 * 60 * 60 * 1000);
+    }
+
+    try {
+      setActionLoading(true);
+      const isoString = newDate.toISOString();
+      await rescheduleTask(taskToReschedule._id, {
+        newDueDate: isoString,
+        newReminderTime: taskToReschedule.hasReminder ? isoString : undefined,
+      });
+      setRescheduleModalVisible(false);
+      setTaskToReschedule(null);
+      await fetchTasks(false);
+    } catch (err) {
+      Alert.alert('Reschedule Error', err.message || 'Failed to reschedule task.');
+    } finally {
+      setActionLoading(false);
+    }
   };
 
   return (
@@ -49,9 +218,46 @@ export const UpcomingEventsScreen = () => {
           <Text style={styles.backButtonText}>Vox AI</Text>
         </TouchableOpacity>
 
-        <Text style={styles.headerTitle}>Upcoming Events</Text>
+        <Text style={styles.headerTitle}>Tasks & Reminders</Text>
 
-        <View style={styles.headerSpacer} />
+        <TouchableOpacity
+          style={styles.refreshButton}
+          onPress={() => fetchTasks(true)}
+          activeOpacity={0.7}
+        >
+          <Ionicons name="reload" size={17} color="#ff6b5b" />
+        </TouchableOpacity>
+      </View>
+
+      {/* Status Segmented Control (Pending / Completed / All) */}
+      <View style={styles.statusSegmentContainer}>
+        {[
+          { key: 'pending', label: 'Pending' },
+          { key: 'completed', label: 'Completed' },
+          { key: 'all', label: 'All Tasks' },
+        ].map((item) => {
+          const isActive = statusFilter === item.key;
+          return (
+            <TouchableOpacity
+              key={item.key}
+              style={[
+                styles.statusSegmentButton,
+                isActive && styles.statusSegmentButtonActive,
+              ]}
+              onPress={() => setStatusFilter(item.key)}
+              activeOpacity={0.75}
+            >
+              <Text
+                style={[
+                  styles.statusSegmentText,
+                  isActive && styles.statusSegmentTextActive,
+                ]}
+              >
+                {item.label}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
       </View>
 
       {/* Category Filter Chips */}
@@ -65,27 +271,24 @@ export const UpcomingEventsScreen = () => {
           <TouchableOpacity
             style={[
               styles.filterChip,
-              filter === 'all' && styles.filterChipActiveAll,
+              selectedCategory === 'all' && styles.filterChipActiveAll,
             ]}
-            onPress={() => setFilter('all')}
+            onPress={() => setSelectedCategory('all')}
             activeOpacity={0.7}
           >
             <Text
               style={[
                 styles.filterChipText,
-                filter === 'all' && styles.filterChipTextActive,
+                selectedCategory === 'all' && styles.filterChipTextActive,
               ]}
             >
-              All ({events.length})
+              All Categories
             </Text>
           </TouchableOpacity>
 
-          {/* 5 Specific Category Chips */}
+          {/* Specific Category Chips */}
           {EVENT_CATEGORIES.map((cat) => {
-            const isActive = filter.toLowerCase() === cat.key.toLowerCase();
-            const count = events.filter(
-              (e) => e.category.toLowerCase() === cat.key.toLowerCase()
-            ).length;
+            const isActive = selectedCategory.toLowerCase() === cat.key.toLowerCase();
 
             return (
               <TouchableOpacity
@@ -97,7 +300,7 @@ export const UpcomingEventsScreen = () => {
                     borderColor: cat.color,
                   },
                 ]}
-                onPress={() => setFilter(cat.key)}
+                onPress={() => setSelectedCategory(cat.key)}
                 activeOpacity={0.7}
               >
                 <Ionicons
@@ -112,7 +315,7 @@ export const UpcomingEventsScreen = () => {
                     isActive && { color: cat.color, fontWeight: '700' },
                   ]}
                 >
-                  {cat.label} ({count})
+                  {cat.label}
                 </Text>
               </TouchableOpacity>
             );
@@ -120,38 +323,107 @@ export const UpcomingEventsScreen = () => {
         </ScrollView>
       </View>
 
-      {/* Events List */}
+      {/* Main Task List */}
       <ScrollView
         style={styles.scrollView}
         contentContainerStyle={styles.content}
         showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            tintColor="#ff4d3a"
+            colors={['#ff4d3a']}
+          />
+        }
       >
-        {filteredEvents.map((item) => {
+        {/* Error Banner */}
+        {error && (
+          <View style={styles.errorCard}>
+            <Ionicons name="alert-circle-outline" size={20} color="#ef4444" />
+            <View style={{ flex: 1 }}>
+              <Text style={styles.errorTitle}>Connection Issue</Text>
+              <Text style={styles.errorText}>{error}</Text>
+            </View>
+            <TouchableOpacity
+              style={styles.retryButton}
+              onPress={() => fetchTasks(true)}
+              activeOpacity={0.7}
+            >
+              <Text style={styles.retryButtonText}>Retry</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {/* Loading Spinner */}
+        {loading && tasks.length === 0 && (
+          <View style={styles.loadingContainer}>
+            <ActivityIndicator size="large" color="#ff4d3a" />
+            <Text style={styles.loadingText}>Fetching tasks from MongoDB Atlas...</Text>
+          </View>
+        )}
+
+        {/* Empty State */}
+        {!loading && tasks.length === 0 && !error && (
+          <View style={styles.emptyContainer}>
+            <View style={styles.emptyIconWrap}>
+              <Ionicons
+                name={statusFilter === 'completed' ? 'checkmark-circle-outline' : 'calendar-outline'}
+                size={40}
+                color="#ff6b5b"
+              />
+            </View>
+            <Text style={styles.emptyTitle}>
+              {statusFilter === 'completed' ? 'No completed tasks' : 'No tasks scheduled'}
+            </Text>
+            <Text style={styles.emptySubtitle}>
+              {statusFilter === 'completed'
+                ? 'Tasks marked complete will appear here.'
+                : 'Say "Remind me tomorrow at 9 AM" in Vox or Chat to create one.'}
+            </Text>
+            <TouchableOpacity
+              style={styles.emptyActionButton}
+              onPress={() => navigate('vox')}
+              activeOpacity={0.7}
+            >
+              <Ionicons name="mic-outline" size={16} color="#ffffff" />
+              <Text style={styles.emptyActionText}>Ask Vox AI</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {/* Task Cards */}
+        {tasks.map((item) => {
           const cat = getCategoryDetails(item.category);
+          const isCompleted = item.completed;
 
           return (
             <View
-              key={item.id}
+              key={item._id}
               style={[
                 styles.eventCard,
                 { borderLeftColor: cat.color, borderLeftWidth: 3.5 },
-                item.isNext && styles.nextEventCard,
+                isCompleted && styles.completedEventCard,
               ]}
             >
-              {item.isNext && (
-                <View style={styles.nextBadge}>
-                  <View style={styles.nextDot} />
-                  <Text style={styles.nextBadgeText}>Priority</Text>
-                </View>
-              )}
-
               <View style={styles.cardHeader}>
                 <View style={styles.timeTag}>
-                  <Ionicons name="time-outline" size={14} color="#ff6b5b" />
-                  <Text style={styles.timeText}>{item.fullDateTime}</Text>
+                  <Ionicons
+                    name={item.hasReminder ? 'alarm-outline' : 'time-outline'}
+                    size={14}
+                    color={item.hasReminder ? '#ff6b5b' : '#9ca3af'}
+                  />
+                  <Text
+                    style={[
+                      styles.timeText,
+                      item.hasReminder && { color: '#ff6b5b', fontWeight: '700' },
+                    ]}
+                  >
+                    {item.dueTimeText || (item.dueDate ? 'Scheduled' : 'No time set')}
+                  </Text>
                 </View>
 
-                {/* Specific Highlighted Colored Tag */}
+                {/* Category Tag */}
                 <View
                   style={[
                     styles.categoryTag,
@@ -169,27 +441,98 @@ export const UpcomingEventsScreen = () => {
                     style={{ marginRight: 5 }}
                   />
                   <Text style={[styles.categoryText, { color: cat.color }]}>
-                    {item.category}
+                    {item.category || 'General'}
                   </Text>
                 </View>
               </View>
 
-              <Text style={styles.eventTitle}>{item.title}</Text>
+              <Text
+                style={[
+                  styles.eventTitle,
+                  isCompleted && styles.completedTitleText,
+                ]}
+              >
+                {item.title}
+              </Text>
 
-              {item.notes && (
+              {item.description ? (
                 <Text style={styles.eventNotes} numberOfLines={2}>
-                  {item.notes}
+                  {item.description}
                 </Text>
-              )}
+              ) : null}
 
+              {/* Priority & Status Badges */}
+              <View style={styles.metaRow}>
+                {item.priority && (
+                  <View
+                    style={[
+                      styles.priorityPill,
+                      item.priority === 'Urgent' && styles.priorityUrgent,
+                      item.priority === 'High' && styles.priorityHigh,
+                    ]}
+                  >
+                    <Text style={styles.priorityText}>{item.priority}</Text>
+                  </View>
+                )}
+
+                {item.hasReminder && (
+                  <View style={styles.reminderBadge}>
+                    <Ionicons name="notifications" size={10} color="#ff4d3a" />
+                    <Text style={styles.reminderBadgeText}>Phone Alarm</Text>
+                  </View>
+                )}
+
+                {isCompleted && (
+                  <View style={styles.completedBadge}>
+                    <Ionicons name="checkmark-circle" size={11} color="#34d399" />
+                    <Text style={styles.completedBadgeText}>Done</Text>
+                  </View>
+                )}
+              </View>
+
+              {/* Interactive Card Action Controls */}
               <View style={styles.cardFooter}>
-                <View style={styles.locationRow}>
-                  <Ionicons
-                    name="location-outline"
-                    size={14}
-                    color={colors.textMuted}
-                  />
-                  <Text style={styles.locationText}>{item.location}</Text>
+                <View style={styles.actionButtonGroup}>
+                  {/* Complete Action */}
+                  {!isCompleted ? (
+                    <TouchableOpacity
+                      style={styles.actionButton}
+                      onPress={() => handleCompleteTask(item)}
+                      disabled={actionLoading}
+                      activeOpacity={0.7}
+                    >
+                      <Ionicons name="checkmark-done" size={15} color="#34d399" />
+                      <Text style={[styles.actionButtonText, { color: '#34d399' }]}>
+                        Done
+                      </Text>
+                    </TouchableOpacity>
+                  ) : null}
+
+                  {/* Reschedule Action */}
+                  <TouchableOpacity
+                    style={styles.actionButton}
+                    onPress={() => openRescheduleModal(item)}
+                    disabled={actionLoading}
+                    activeOpacity={0.7}
+                  >
+                    <Ionicons name="calendar-outline" size={14} color="#60a5fa" />
+                    <Text style={[styles.actionButtonText, { color: '#60a5fa' }]}>
+                      Reschedule
+                    </Text>
+                  </TouchableOpacity>
+
+                  {/* Delete Action */}
+                  <TouchableOpacity
+                    style={styles.actionButton}
+                    onPress={() => handleDeleteTask(item)}
+                    disabled={actionLoading}
+                    activeOpacity={0.7}
+                  >
+                    <Ionicons name="trash-outline" size={14} color="#f87171" />
+                    <Text style={[styles.actionButtonText, { color: '#f87171' }]}>
+                      Delete
+                    </Text>
+                  </TouchableOpacity>
                 </View>
 
                 <TouchableOpacity
@@ -197,14 +540,79 @@ export const UpcomingEventsScreen = () => {
                   onPress={() => navigate('vox')}
                   activeOpacity={0.7}
                 >
-                  <Ionicons name="mic-outline" size={14} color="#ff6b5b" />
-                  <Text style={styles.askVoxText}>Ask Vox</Text>
+                  <Ionicons name="mic-outline" size={13} color="#ff6b5b" />
+                  <Text style={styles.askVoxText}>Vox</Text>
                 </TouchableOpacity>
               </View>
             </View>
           );
         })}
       </ScrollView>
+
+      {/* Reschedule Quick Options Modal */}
+      <Modal
+        visible={rescheduleModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setRescheduleModalVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.modalTitle}>Reschedule Task</Text>
+                <Text style={styles.modalSubtitle} numberOfLines={1}>
+                  {taskToReschedule?.title}
+                </Text>
+              </View>
+              <TouchableOpacity
+                onPress={() => setRescheduleModalVisible(false)}
+                style={styles.modalCloseButton}
+              >
+                <Ionicons name="close" size={20} color="#9ca3af" />
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.rescheduleOptionsList}>
+              <TouchableOpacity
+                style={styles.rescheduleOptionItem}
+                onPress={() => handleApplyReschedule('1h')}
+                activeOpacity={0.7}
+              >
+                <Ionicons name="time-outline" size={18} color="#60a5fa" />
+                <Text style={styles.rescheduleOptionText}>Postpone 1 Hour</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.rescheduleOptionItem}
+                onPress={() => handleApplyReschedule('tomorrow_9am')}
+                activeOpacity={0.7}
+              >
+                <Ionicons name="sunny-outline" size={18} color="#f59e0b" />
+                <Text style={styles.rescheduleOptionText}>Tomorrow Morning (9:00 AM)</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.rescheduleOptionItem}
+                onPress={() => handleApplyReschedule('tomorrow_3pm')}
+                activeOpacity={0.7}
+              >
+                <Ionicons name="partly-sunny-outline" size={18} color="#ff6b5b" />
+                <Text style={styles.rescheduleOptionText}>Tomorrow Afternoon (3:00 PM)</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.rescheduleOptionItem}
+                onPress={() => handleApplyReschedule('next_week')}
+                activeOpacity={0.7}
+              >
+                <Ionicons name="calendar-outline" size={18} color="#c084fc" />
+                <Text style={styles.rescheduleOptionText}>Next Week (+7 Days)</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 };
@@ -241,11 +649,43 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#ffffff',
   },
-  headerSpacer: {
-    width: 60,
+  refreshButton: {
+    padding: 6,
+    borderRadius: radii.full,
+    backgroundColor: 'rgba(255, 77, 58, 0.12)',
+  },
+  statusSegmentContainer: {
+    flexDirection: 'row',
+    backgroundColor: '#0c0f17',
+    marginHorizontal: spacing.lg,
+    marginTop: spacing.sm,
+    marginBottom: spacing.xs,
+    padding: 3,
+    borderRadius: radii.lg,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
+  },
+  statusSegmentButton: {
+    flex: 1,
+    paddingVertical: 7,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: radii.md,
+  },
+  statusSegmentButtonActive: {
+    backgroundColor: '#ff4d3a',
+  },
+  statusSegmentText: {
+    color: '#9ca3af',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  statusSegmentTextActive: {
+    color: '#ffffff',
+    fontWeight: '700',
   },
   filterWrapper: {
-    paddingVertical: spacing.sm + 2,
+    paddingVertical: spacing.sm,
     borderBottomWidth: 1,
     borderBottomColor: 'rgba(255, 255, 255, 0.05)',
   },
@@ -257,8 +697,8 @@ const styles = StyleSheet.create({
   filterChip: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 13,
-    paddingVertical: 7,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
     borderRadius: radii.full,
     backgroundColor: 'rgba(255, 255, 255, 0.06)',
     borderWidth: 1,
@@ -286,6 +726,92 @@ const styles = StyleSheet.create({
     paddingBottom: spacing.xxl,
     gap: 12,
   },
+  loadingContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: spacing.xxl,
+    gap: 12,
+  },
+  loadingText: {
+    color: '#9ca3af',
+    fontSize: 13,
+  },
+  errorCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(239, 68, 68, 0.15)',
+    borderColor: 'rgba(239, 68, 68, 0.4)',
+    borderWidth: 1,
+    borderRadius: radii.md,
+    padding: spacing.md,
+    gap: 10,
+  },
+  errorTitle: {
+    color: '#ef4444',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  errorText: {
+    color: '#d1d5db',
+    fontSize: 12,
+  },
+  retryButton: {
+    backgroundColor: 'rgba(239, 68, 68, 0.25)',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: radii.sm,
+  },
+  retryButtonText: {
+    color: '#ffffff',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  emptyContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#0c0f17',
+    borderRadius: radii.lg,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
+    paddingVertical: spacing.xl * 1.5,
+    paddingHorizontal: spacing.lg,
+    gap: 10,
+  },
+  emptyIconWrap: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    backgroundColor: 'rgba(255, 77, 58, 0.1)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 4,
+  },
+  emptyTitle: {
+    color: '#ffffff',
+    fontSize: 17,
+    fontWeight: '700',
+  },
+  emptySubtitle: {
+    color: '#9ca3af',
+    fontSize: 13,
+    textAlign: 'center',
+    lineHeight: 18,
+    marginBottom: 8,
+  },
+  emptyActionButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#ff4d3a',
+    paddingHorizontal: 16,
+    paddingVertical: 9,
+    borderRadius: radii.full,
+  },
+  emptyActionText: {
+    color: '#ffffff',
+    fontSize: 13,
+    fontWeight: '600',
+  },
   eventCard: {
     backgroundColor: '#11141c',
     borderRadius: radii.lg,
@@ -293,32 +819,10 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'rgba(255, 255, 255, 0.08)',
   },
-  nextEventCard: {
-    borderColor: 'rgba(255, 77, 58, 0.45)',
-    backgroundColor: 'rgba(255, 77, 58, 0.06)',
-  },
-  nextBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    alignSelf: 'flex-start',
-    backgroundColor: 'rgba(255, 77, 58, 0.2)',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: radii.full,
-    marginBottom: 8,
-    gap: 5,
-  },
-  nextDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: '#ff4d3a',
-  },
-  nextBadgeText: {
-    color: '#ff6b5b',
-    fontSize: 10,
-    fontWeight: '700',
-    textTransform: 'uppercase',
+  completedEventCard: {
+    opacity: 0.65,
+    backgroundColor: '#0a0d14',
+    borderColor: 'rgba(255, 255, 255, 0.04)',
   },
   cardHeader: {
     flexDirection: 'row',
@@ -339,12 +843,12 @@ const styles = StyleSheet.create({
   categoryTag: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 10,
-    paddingVertical: 4,
+    paddingHorizontal: 9,
+    paddingVertical: 3,
     borderRadius: radii.md,
   },
   categoryText: {
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '800',
     letterSpacing: 0.3,
   },
@@ -355,11 +859,67 @@ const styles = StyleSheet.create({
     marginBottom: 6,
     lineHeight: 22,
   },
+  completedTitleText: {
+    textDecorationLine: 'line-through',
+    color: '#9ca3af',
+  },
   eventNotes: {
-    fontSize: 12,
+    fontSize: 13,
     color: '#9ca3af',
     marginBottom: 10,
-    lineHeight: 16,
+    lineHeight: 18,
+  },
+  metaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 10,
+  },
+  priorityPill: {
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 4,
+    backgroundColor: 'rgba(255, 255, 255, 0.08)',
+  },
+  priorityHigh: {
+    backgroundColor: 'rgba(245, 158, 11, 0.2)',
+  },
+  priorityUrgent: {
+    backgroundColor: 'rgba(239, 68, 68, 0.2)',
+  },
+  priorityText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#d1d5db',
+    textTransform: 'uppercase',
+  },
+  reminderBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: 'rgba(255, 77, 58, 0.15)',
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  reminderBadgeText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#ff6b5b',
+  },
+  completedBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: 'rgba(52, 211, 153, 0.15)',
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  completedBadgeText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#34d399',
   },
   cardFooter: {
     flexDirection: 'row',
@@ -369,27 +929,92 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: 'rgba(255, 255, 255, 0.06)',
   },
-  locationRow: {
+  actionButtonGroup: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 5,
+    gap: 8,
   },
-  locationText: {
-    color: '#9ca3af',
-    fontSize: 12,
+  actionButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+    borderRadius: radii.sm,
+  },
+  actionButtonText: {
+    fontSize: 11,
+    fontWeight: '600',
   },
   askVoxButton: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
     backgroundColor: 'rgba(255, 77, 58, 0.12)',
-    paddingHorizontal: 10,
-    paddingVertical: 5,
+    paddingHorizontal: 9,
+    paddingVertical: 4,
     borderRadius: radii.full,
   },
   askVoxText: {
     color: '#ff6b5b',
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.75)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: spacing.xl,
+  },
+  modalContent: {
+    width: '100%',
+    maxWidth: 380,
+    backgroundColor: '#11141c',
+    borderRadius: radii.xl,
+    padding: spacing.lg,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.12)',
+    gap: 16,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+  },
+  modalTitle: {
+    color: '#ffffff',
+    fontSize: 17,
+    fontWeight: '700',
+  },
+  modalSubtitle: {
+    color: '#9ca3af',
     fontSize: 12,
+    marginTop: 2,
+  },
+  modalCloseButton: {
+    padding: 4,
+  },
+  rescheduleOptionsList: {
+    gap: 10,
+  },
+  rescheduleOptionItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    backgroundColor: '#191f2d',
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderRadius: radii.md,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.06)',
+  },
+  rescheduleOptionText: {
+    color: '#ffffff',
+    fontSize: 14,
     fontWeight: '600',
   },
 });

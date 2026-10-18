@@ -29,8 +29,29 @@ app.get('/api/health', (req, res) => {
   });
 });
 
+// Database connection
+const { connectDB } = require('./config/db');
+
+// Routes
+const chatRoutes = require('./routes/chat');
+const conversationRoutes = require('./routes/conversations');
+const memoryRoutes = require('./routes/memories');
+const taskRoutes = require('./routes/tasks');
+
+app.use('/api/chat', chatRoutes);
+app.use('/api/conversations', conversationRoutes);
+app.use('/api/memories', memoryRoutes);
+app.use('/api/tasks', taskRoutes);
+
 // Start listening
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
   console.log(`Backend server is running on http://localhost:${PORT}`);
   console.log(`Health check route: http://localhost:${PORT}/api/health`);
+  console.log(`Chat endpoint: POST http://localhost:${PORT}/api/chat`);
+  console.log(`Conversations endpoint: http://localhost:${PORT}/api/conversations`);
+  console.log(`Memories endpoint: http://localhost:${PORT}/api/memories`);
+  console.log(`Tasks endpoint: http://localhost:${PORT}/api/tasks`);
+
+  // Connect to MongoDB Atlas
+  await connectDB();
 });
