@@ -2,20 +2,24 @@ import React, { createContext, useContext, useState } from 'react';
 
 const NavigationContext = createContext({
   currentTab: 'vox',
+  navParams: {},
   navigate: () => {},
 });
 
 export const NavigationProvider = ({ children }) => {
   const [currentTab, setCurrentTab] = useState('vox');
+  const [navParams, setNavParams] = useState({});
 
-  const navigate = (tabName) => {
+  const navigate = (tabName, params = {}) => {
     setCurrentTab(tabName);
+    setNavParams(params);
   };
 
   return (
     <NavigationContext.Provider
       value={{
         currentTab,
+        navParams,
         navigate,
       }}
     >

@@ -211,6 +211,14 @@ export const EVENT_CATEGORIES = [
     icon: 'people-outline',
   },
   {
+    key: 'Personal',
+    label: 'Personal',
+    color: '#818cf8',
+    bgColor: 'rgba(129, 140, 248, 0.22)',
+    borderColor: 'rgba(129, 140, 248, 0.55)',
+    icon: 'person-outline',
+  },
+  {
     key: 'Other',
     label: 'Other',
     color: '#fde047',
