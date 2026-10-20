@@ -1,4 +1,5 @@
 import { Platform, NativeModules } from 'react-native';
+import Constants from 'expo-constants';
 
 /**
  * Centralized Backend API Configuration for Personal AI Assistant
@@ -7,11 +8,10 @@ import { Platform, NativeModules } from 'react-native';
  * Target Device Configuration Guide:
  *
  * 1. Physical Android or iOS Device (via Expo Go):
- *    - The device connects to your computer over Wi-Fi / Local Area Network.
- *    - The app will automatically extract your computer's IP from the Metro
- *      bundler connection (NativeModules.SourceCode.scriptURL).
- *    - If auto-detection cannot resolve, it falls back to DEV_LAN_IP below.
- *    - CURRENT MACHINE IP: '192.168.1.3'
+ *    - Automatically discovers your computer's IP using Expo Constants and
+ *      Metro bundler URL. Adapts dynamically if your computer IP changes.
+ *    - Falls back to DEV_LAN_IP if auto-discovery is unavailable.
+ *    - CURRENT MACHINE IP: '192.168.1.2'
  *
  * 2. Android Emulator (Android Studio):
  *    - In an emulator, localhost (127.0.0.1) refers to the virtual device itself.
@@ -30,35 +30,45 @@ import { Platform, NativeModules } from 'react-native';
 // Port on which the Express backend server is listening
 export const BACKEND_PORT = 5000;
 
-// Your computer's current LAN IPv4 address.
-// Automatically updated to match current Ethernet/Wi-Fi adapter IP (192.168.1.3).
-export const DEV_LAN_IP = '192.168.1.3';
+// Your computer's current LAN IPv4 address (fallback)
+export const DEV_LAN_IP = '192.168.1.2';
 
 // Set to true ONLY when running on an Android Studio Emulator
 export const USE_ANDROID_EMULATOR = false;
 
 /**
- * Extracts the host IP from React Native's Metro bundler script URL.
- * In Expo Go development mode, the JavaScript bundle is fetched from your computer's IP (e.g. 192.168.1.3:8081).
+ * Extracts the host IP dynamically from Expo packager / Metro bundler.
+ * In Expo Go, this automatically grabs your computer's IP without manual edits.
  *
  * @returns {string|null} Detected host IP or hostname
  */
 export const getDetectedMetroHost = () => {
   try {
+    // 1. Check Expo Constants hostUri (standard in modern Expo SDKs)
+    const hostUri = Constants?.expoConfig?.hostUri
+      || Constants?.manifest?.debuggerHost
+      || Constants?.manifest2?.extra?.expoGo?.debuggerHost;
+
+    if (hostUri && typeof hostUri === 'string') {
+      const host = hostUri.split(':')[0];
+      if (host && host !== 'localhost' && host !== '127.0.0.1') {
+        return host;
+      }
+    }
+
+    // 2. Check NativeModules SourceCode scriptURL
     const scriptURL = NativeModules?.SourceCode?.scriptURL;
     if (scriptURL) {
-      // Matches http://192.168.1.3:8081/... or exp://192.168.1.3:8081/...
       const match = scriptURL.match(/^(?:https?|exp):\/\/([^:/]+)/i);
       if (match && match[1]) {
         const detected = match[1];
-        // Ensure it's not a loopback address
         if (detected !== 'localhost' && detected !== '127.0.0.1') {
           return detected;
         }
       }
     }
   } catch (_) {
-    // NativeModules.SourceCode might not be available in non-standard runtimes
+    // Ignore runtime inspection errors
   }
   return null;
 };

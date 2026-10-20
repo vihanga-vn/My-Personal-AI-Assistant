@@ -152,6 +152,30 @@ export async function rescheduleTask(taskId, { newDueDate, newReminderTime, time
 }
 
 /**
+ * Update editable task details (title, description, category, priority, dates, reminder).
+ *
+ * @param {string} taskId
+ * @param {Object} updateData
+ * @returns {Promise<{message: string, task: Object}>}
+ */
+export async function updateTask(taskId, updateData = {}) {
+  if (!taskId) throw new Error('Task ID is required.');
+  const payload = { ...updateData };
+  if (payload.dueDate) {
+    payload.dueDate = new Date(payload.dueDate).toISOString();
+  }
+  if (payload.reminderTime) {
+    payload.reminderTime = new Date(payload.reminderTime).toISOString();
+  }
+  const result = await resilientApiFetch(`/api/tasks/${taskId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  });
+  notifyTasksUpdated();
+  return result;
+}
+
+/**
  * Cancel or permanently delete a task.
  *
  * @param {string} taskId

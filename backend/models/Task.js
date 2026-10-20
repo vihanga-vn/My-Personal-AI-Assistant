@@ -40,7 +40,7 @@ const TaskSchema = new mongoose.Schema(
         values: ['Work', 'University', 'Health', 'Finance', 'Hangouts', 'Personal', 'Other'],
         message: '{VALUE} is not a supported task category.',
       },
-      default: 'Personal',
+      default: 'Other',
       index: true,
     },
     priority: {

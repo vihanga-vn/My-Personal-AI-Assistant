@@ -16,15 +16,19 @@ import { colors } from '../theme/colors';
 import { typography } from '../theme/typography';
 import { spacing, radii } from '../theme/spacing';
 import { useNavigation } from '../navigation/NavigationContext';
-import { EVENT_CATEGORIES } from '../data/mockData';
+import {
+  TASK_CATEGORIES,
+  getCategoryDetails,
+  getCategoryEmoji,
+} from '../config/categories';
 import {
   getTasks,
   completeTask,
   deleteTask,
-  rescheduleTask,
   onTasksUpdated,
 } from '../services/taskService';
-import { cancelLocalReminder } from '../services/notificationService';
+import { cancelLocalReminderForTask } from '../services/notificationService';
+import { TaskEditModal } from '../components/TaskEditModal';
 
 export const UpcomingEventsScreen = () => {
   const { navigate } = useNavigation();
@@ -37,9 +41,9 @@ export const UpcomingEventsScreen = () => {
   const [selectedCategory, setSelectedCategory] = useState('all');
   const [statusFilter, setStatusFilter] = useState('pending'); // 'pending' | 'completed' | 'all'
 
-  // Reschedule Modal state
-  const [rescheduleModalVisible, setRescheduleModalVisible] = useState(false);
-  const [taskToReschedule, setTaskToReschedule] = useState(null);
+  // Task Details & Reschedule Modal state
+  const [editModalVisible, setEditModalVisible] = useState(false);
+  const [taskToEdit, setTaskToEdit] = useState(null);
   const [actionLoading, setActionLoading] = useState(false);
 
   const fetchTasks = useCallback(async (isInitial = false) => {
@@ -51,8 +55,22 @@ export const UpcomingEventsScreen = () => {
         category: selectedCategory !== 'all' ? selectedCategory : undefined,
       });
 
-      // Sort pending/upcoming tasks by due date/time ascending (earliest first, overdue at top, undated last)
-      const sorted = (data.tasks || []).slice().sort((a, b) => {
+      let list = data.tasks || [];
+
+      // Filter: if viewing pending (upcoming), ensure completed tasks never appear
+      if (statusFilter === 'pending') {
+        list = list.filter((t) => !t.completed);
+      } else if (statusFilter === 'completed') {
+        list = list.filter((t) => t.completed);
+      }
+
+      // Canonical Upcoming Task Sorting Rules:
+      // 1. Pending tasks with earliest due date and time first.
+      // 2. Tasks with the same due date sorted by due time.
+      // 3. Overdue pending tasks remain visible, ordered from oldest overdue to most recently overdue.
+      // 4. Completed tasks do not appear in the upcoming task list.
+      // 5. Tasks without a valid due date appear after tasks with valid due dates.
+      const sorted = list.slice().sort((a, b) => {
         const getTaskTime = (t) => {
           if (t.dueDate) {
             const ms = new Date(t.dueDate).getTime();
@@ -94,29 +112,12 @@ export const UpcomingEventsScreen = () => {
     fetchTasks(false);
   };
 
-  const getCategoryDetails = (catName) => {
-    return (
-      EVENT_CATEGORIES.find(
-        (c) => c.key.toLowerCase() === (catName || '').toLowerCase()
-      ) || {
-        key: catName || 'Other',
-        label: catName || 'Other',
-        color: '#fde047',
-        bgColor: 'rgba(253, 224, 71, 0.22)',
-        borderColor: 'rgba(253, 224, 71, 0.55)',
-        icon: 'calendar-outline',
-      }
-    );
-  };
-
   // Handle Complete
   const handleCompleteTask = async (task) => {
-    if (task.completed) return; // already completed
+    if (task.completed) return;
     try {
       setActionLoading(true);
-      if (task.notificationId) {
-        cancelLocalReminder(task.notificationId).catch(() => {});
-      }
+      await cancelLocalReminderForTask(task._id);
       await completeTask(task._id);
       await fetchTasks(false);
     } catch (err) {
@@ -139,9 +140,7 @@ export const UpcomingEventsScreen = () => {
           onPress: async () => {
             try {
               setActionLoading(true);
-              if (task.notificationId) {
-                cancelLocalReminder(task.notificationId).catch(() => {});
-              }
+              await cancelLocalReminderForTask(task._id);
               await deleteTask(task._id);
               await fetchTasks(false);
             } catch (err) {
@@ -155,54 +154,10 @@ export const UpcomingEventsScreen = () => {
     );
   };
 
-  // Open Reschedule Modal
-  const openRescheduleModal = (task) => {
-    setTaskToReschedule(task);
-    setRescheduleModalVisible(true);
-  };
-
-  // Execute quick reschedule option
-  const handleApplyReschedule = async (offsetType) => {
-    if (!taskToReschedule) return;
-
-    const now = new Date();
-    let newDate = new Date();
-
-    switch (offsetType) {
-      case '1h':
-        newDate = new Date(now.getTime() + 60 * 60 * 1000);
-        break;
-      case 'tomorrow_9am':
-        newDate.setDate(newDate.getDate() + 1);
-        newDate.setHours(9, 0, 0, 0);
-        break;
-      case 'tomorrow_3pm':
-        newDate.setDate(newDate.getDate() + 1);
-        newDate.setHours(15, 0, 0, 0);
-        break;
-      case 'next_week':
-        newDate.setDate(newDate.getDate() + 7);
-        newDate.setHours(10, 0, 0, 0);
-        break;
-      default:
-        newDate = new Date(now.getTime() + 2 * 60 * 60 * 1000);
-    }
-
-    try {
-      setActionLoading(true);
-      const isoString = newDate.toISOString();
-      await rescheduleTask(taskToReschedule._id, {
-        newDueDate: isoString,
-        newReminderTime: taskToReschedule.hasReminder ? isoString : undefined,
-      });
-      setRescheduleModalVisible(false);
-      setTaskToReschedule(null);
-      await fetchTasks(false);
-    } catch (err) {
-      Alert.alert('Reschedule Error', err.message || 'Failed to reschedule task.');
-    } finally {
-      setActionLoading(false);
-    }
+  // Open Edit / Reschedule Modal
+  const openEditModal = (task) => {
+    setTaskToEdit(task);
+    setEditModalVisible(true);
   };
 
   return (
@@ -287,7 +242,7 @@ export const UpcomingEventsScreen = () => {
           </TouchableOpacity>
 
           {/* Specific Category Chips */}
-          {EVENT_CATEGORIES.map((cat) => {
+          {TASK_CATEGORIES.map((cat) => {
             const isActive = selectedCategory.toLowerCase() === cat.key.toLowerCase();
 
             return (
@@ -303,19 +258,13 @@ export const UpcomingEventsScreen = () => {
                 onPress={() => setSelectedCategory(cat.key)}
                 activeOpacity={0.7}
               >
-                <Ionicons
-                  name={cat.icon}
-                  size={14}
-                  color={isActive ? cat.color : '#9ca3af'}
-                  style={{ marginRight: 5 }}
-                />
                 <Text
                   style={[
                     styles.filterChipText,
                     isActive && { color: cat.color, fontWeight: '700' },
                   ]}
                 >
-                  {cat.label}
+                  {cat.emoji} {cat.label}
                 </Text>
               </TouchableOpacity>
             );
@@ -434,14 +383,8 @@ export const UpcomingEventsScreen = () => {
                     },
                   ]}
                 >
-                  <Ionicons
-                    name={cat.icon}
-                    size={13}
-                    color={cat.color}
-                    style={{ marginRight: 5 }}
-                  />
                   <Text style={[styles.categoryText, { color: cat.color }]}>
-                    {item.category || 'General'}
+                    {cat.emoji} {cat.label}
                   </Text>
                 </View>
               </View>
@@ -508,16 +451,16 @@ export const UpcomingEventsScreen = () => {
                     </TouchableOpacity>
                   ) : null}
 
-                  {/* Reschedule Action */}
+                  {/* Edit & Reschedule Action */}
                   <TouchableOpacity
                     style={styles.actionButton}
-                    onPress={() => openRescheduleModal(item)}
+                    onPress={() => openEditModal(item)}
                     disabled={actionLoading}
                     activeOpacity={0.7}
                   >
-                    <Ionicons name="calendar-outline" size={14} color="#60a5fa" />
+                    <Ionicons name="create-outline" size={14} color="#60a5fa" />
                     <Text style={[styles.actionButtonText, { color: '#60a5fa' }]}>
-                      Reschedule
+                      Edit / Reschedule
                     </Text>
                   </TouchableOpacity>
 
@@ -549,70 +492,16 @@ export const UpcomingEventsScreen = () => {
         })}
       </ScrollView>
 
-      {/* Reschedule Quick Options Modal */}
-      <Modal
-        visible={rescheduleModalVisible}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setRescheduleModalVisible(false)}
-      >
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
-            <View style={styles.modalHeader}>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.modalTitle}>Reschedule Task</Text>
-                <Text style={styles.modalSubtitle} numberOfLines={1}>
-                  {taskToReschedule?.title}
-                </Text>
-              </View>
-              <TouchableOpacity
-                onPress={() => setRescheduleModalVisible(false)}
-                style={styles.modalCloseButton}
-              >
-                <Ionicons name="close" size={20} color="#9ca3af" />
-              </TouchableOpacity>
-            </View>
-
-            <View style={styles.rescheduleOptionsList}>
-              <TouchableOpacity
-                style={styles.rescheduleOptionItem}
-                onPress={() => handleApplyReschedule('1h')}
-                activeOpacity={0.7}
-              >
-                <Ionicons name="time-outline" size={18} color="#60a5fa" />
-                <Text style={styles.rescheduleOptionText}>Postpone 1 Hour</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={styles.rescheduleOptionItem}
-                onPress={() => handleApplyReschedule('tomorrow_9am')}
-                activeOpacity={0.7}
-              >
-                <Ionicons name="sunny-outline" size={18} color="#f59e0b" />
-                <Text style={styles.rescheduleOptionText}>Tomorrow Morning (9:00 AM)</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={styles.rescheduleOptionItem}
-                onPress={() => handleApplyReschedule('tomorrow_3pm')}
-                activeOpacity={0.7}
-              >
-                <Ionicons name="partly-sunny-outline" size={18} color="#ff6b5b" />
-                <Text style={styles.rescheduleOptionText}>Tomorrow Afternoon (3:00 PM)</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={styles.rescheduleOptionItem}
-                onPress={() => handleApplyReschedule('next_week')}
-                activeOpacity={0.7}
-              >
-                <Ionicons name="calendar-outline" size={18} color="#c084fc" />
-                <Text style={styles.rescheduleOptionText}>Next Week (+7 Days)</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
+      {/* Task Details & Custom Reschedule Modal */}
+      <TaskEditModal
+        visible={editModalVisible}
+        task={taskToEdit}
+        onClose={() => {
+          setEditModalVisible(false);
+          setTaskToEdit(null);
+        }}
+        onTaskUpdated={() => fetchTasks(false)}
+      />
     </View>
   );
 };

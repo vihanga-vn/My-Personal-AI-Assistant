@@ -17,9 +17,9 @@ export async function sendChatMessage(message, history = [], conversationId = nu
   // Sanitize history to keep payload light (last 8 messages)
   const sanitizedHistory = Array.isArray(history)
     ? history.slice(-8).map((item) => ({
-        sender: item.sender === 'user' ? 'user' : 'assistant',
-        text: item.text,
-      }))
+      sender: item.sender === 'user' ? 'user' : 'assistant',
+      text: item.text,
+    }))
     : [];
 
   const payload = {
@@ -32,7 +32,8 @@ export async function sendChatMessage(message, history = [], conversationId = nu
   const targetUrl = `${baseUrl}/api/chat`;
 
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 20000);
+  const TIMEOUT_MS = 25000;
+  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
 
   let response;
   try {
@@ -48,8 +49,8 @@ export async function sendChatMessage(message, history = [], conversationId = nu
     clearTimeout(timer);
   } catch (netErr) {
     clearTimeout(timer);
-    const isTimeout = netErr.name === 'AbortError';
-    const reason = isTimeout ? 'Request timed out after 20s' : (netErr.message || 'Network request failed');
+    const isTimeout = netErr.name === 'AbortError' || controller.signal.aborted;
+    const reason = isTimeout ? `Request timed out after ${TIMEOUT_MS / 1000}s` : (netErr.message || 'Network request failed');
     throw new Error(
       `Unable to connect to backend at ${targetUrl} (${reason}). Ensure backend is running ("npm run dev" in /backend) and device is on the same network.`
     );
@@ -61,7 +62,7 @@ export async function sendChatMessage(message, history = [], conversationId = nu
     try {
       const errJson = await response.json();
       if (errJson.error) errorDetail = errJson.error;
-    } catch (_) {}
+    } catch (_) { }
     const rateLimitError = new Error(errorDetail);
     rateLimitError.isRateLimit = true;
     throw rateLimitError;
@@ -72,7 +73,7 @@ export async function sendChatMessage(message, history = [], conversationId = nu
     try {
       const errJson = await response.json();
       if (errJson.error) errorMsg = errJson.error;
-    } catch (_) {}
+    } catch (_) { }
     throw new Error(errorMsg);
   }
 
