@@ -35,7 +35,7 @@ async function createTask({
   }
 
   const validCategories = ['Work', 'University', 'Health', 'Finance', 'Hangouts', 'Personal', 'Other'];
-  const normalizedCategory = validCategories.includes(category) ? category : 'Personal';
+  const normalizedCategory = validCategories.includes(category) ? category : 'Other';
 
   const validPriorities = ['Low', 'Medium', 'High', 'Urgent'];
   const normalizedPriority = validPriorities.includes(priority) ? priority : 'Medium';
@@ -474,12 +474,144 @@ async function updateNotificationId(taskId, notificationId) {
   return null;
 }
 
+/**
+ * Update editable task details (title, description, category, priority, dates, reminder).
+ */
+async function updateTask(idOrTitle, {
+  title,
+  description,
+  category,
+  priority,
+  dueDate,
+  reminderTime,
+  hasReminder,
+  timeZone = DEFAULT_TIMEZONE,
+} = {}) {
+  if (!idOrTitle) {
+    const err = new Error('Task identifier is required for update.');
+    err.statusCode = 400;
+    throw err;
+  }
+
+  const updates = {};
+  const validCategories = ['Work', 'University', 'Health', 'Finance', 'Hangouts', 'Personal', 'Other'];
+  const validPriorities = ['Low', 'Medium', 'High', 'Urgent'];
+
+  if (title !== undefined) {
+    if (typeof title !== 'string' || title.trim() === '') {
+      const err = new Error('Task title cannot be empty.');
+      err.statusCode = 400;
+      throw err;
+    }
+    updates.title = title.trim();
+  }
+
+  if (description !== undefined) {
+    updates.description = typeof description === 'string' ? description.trim() : '';
+  }
+
+  if (category !== undefined) {
+    updates.category = validCategories.includes(category) ? category : 'Other';
+  }
+
+  if (priority !== undefined) {
+    updates.priority = validPriorities.includes(priority) ? priority : 'Medium';
+  }
+
+  let parsedDueDate = null;
+  if (dueDate !== undefined) {
+    if (dueDate === null || dueDate === '') {
+      updates.dueDate = null;
+    } else {
+      const val = parseAndValidateDateTime(dueDate, timeZone);
+      if (!val.isValid) throw new Error(val.error);
+      updates.dueDate = val.date;
+      parsedDueDate = val.date;
+    }
+  }
+
+  if (reminderTime !== undefined) {
+    if (reminderTime === null || reminderTime === '') {
+      updates.reminderTime = null;
+      updates.reminderStatus = 'none';
+      updates.hasReminder = false;
+    } else {
+      const val = parseAndValidateDateTime(reminderTime, timeZone);
+      if (!val.isValid) throw new Error(val.error);
+      updates.reminderTime = val.date;
+      updates.hasReminder = true;
+      updates.reminderStatus = 'scheduled';
+      if (updates.dueDate === undefined && !parsedDueDate) {
+        updates.dueDate = val.date;
+      }
+    }
+  }
+
+  if (hasReminder !== undefined) {
+    updates.hasReminder = Boolean(hasReminder);
+    if (!updates.hasReminder) {
+      updates.reminderStatus = 'none';
+    } else if (updates.reminderStatus === undefined) {
+      updates.reminderStatus = 'scheduled';
+    }
+  }
+
+  // Recalculate human-readable dueTimeText if dates changed
+  if (updates.dueDate !== undefined || updates.reminderTime !== undefined) {
+    updates.dueTimeText = formatHumanTime(updates.dueDate || updates.reminderTime, timeZone);
+  }
+
+  if (isDBConnected()) {
+    let task;
+    if (isValidObjectId(idOrTitle)) {
+      task = await Task.findByIdAndUpdate(idOrTitle, updates, { new: true }).lean();
+    } else {
+      const regex = new RegExp(idOrTitle.trim(), 'i');
+      task = await Task.findOneAndUpdate({ title: regex }, updates, { new: true }).lean();
+    }
+
+    if (!task) {
+      const err = new Error(`Task matching "${idOrTitle}" not found.`);
+      err.statusCode = 404;
+      throw err;
+    }
+    return task;
+  } else {
+    const id = String(idOrTitle);
+    let task = inMemoryTasks.get(id);
+
+    if (!task) {
+      for (const [, t] of inMemoryTasks.entries()) {
+        if (t.title.toLowerCase().includes(idOrTitle.toLowerCase())) {
+          task = t;
+          break;
+        }
+      }
+    }
+
+    if (!task) {
+      const err = new Error(`Task matching "${idOrTitle}" not found.`);
+      err.statusCode = 404;
+      throw err;
+    }
+
+    const updatedTask = {
+      ...task,
+      ...updates,
+      updatedAt: new Date(),
+    };
+    inMemoryTasks.set(String(updatedTask._id), updatedTask);
+    return updatedTask;
+  }
+}
+
 module.exports = {
   createTask,
   getTaskById,
   listTasks,
   completeTask,
   rescheduleTask,
+  updateTask,
   cancelTaskOrReminder,
   updateNotificationId,
 };

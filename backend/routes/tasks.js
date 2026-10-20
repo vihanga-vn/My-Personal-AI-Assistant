@@ -99,6 +99,80 @@ router.patch('/:id/complete', async (req, res) => {
 });
 
 /**
+ * PATCH /api/tasks/:id
+ * Update editable task details (title, description, category, priority, dates, reminder).
+ */
+router.patch('/:id', async (req, res) => {
+  try {
+    const {
+      title,
+      description,
+      category,
+      priority,
+      dueDate,
+      reminderTime,
+      hasReminder,
+      timeZone,
+    } = req.body;
+
+    const updated = await taskService.updateTask(req.params.id, {
+      title,
+      description,
+      category,
+      priority,
+      dueDate,
+      reminderTime,
+      hasReminder,
+      timeZone,
+    });
+
+    return res.status(200).json({
+      message: 'Task updated successfully.',
+      task: updated,
+    });
+  } catch (error) {
+    return res.status(error.statusCode || 400).json({
+      error: error.message || 'Error updating task.',
+    });
+  }
+});
+
+router.put('/:id', async (req, res) => {
+  try {
+    const {
+      title,
+      description,
+      category,
+      priority,
+      dueDate,
+      reminderTime,
+      hasReminder,
+      timeZone,
+    } = req.body;
+
+    const updated = await taskService.updateTask(req.params.id, {
+      title,
+      description,
+      category,
+      priority,
+      dueDate,
+      reminderTime,
+      hasReminder,
+      timeZone,
+    });
+
+    return res.status(200).json({
+      message: 'Task updated successfully.',
+      task: updated,
+    });
+  } catch (error) {
+    return res.status(error.statusCode || 400).json({
+      error: error.message || 'Error updating task.',
+    });
+  }
+});
+
+/**
  * PATCH /api/tasks/:id/reschedule
  * Reschedule a task or reminder.
  */

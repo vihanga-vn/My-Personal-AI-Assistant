@@ -25,7 +25,8 @@ import {
   requestSpeechPermissions,
 } from '../services/voiceService';
 import { scheduleLocalReminder, cancelLocalReminder } from '../services/notificationService';
-import { notifyTasksUpdated } from '../services/taskService';
+import { notifyTasksUpdated, getTasks } from '../services/taskService';
+import { getConversations, getConversation } from '../services/conversationService';
 
 export const VoxScreen = () => {
   const { navigate, navParams } = useNavigation();
@@ -49,7 +50,6 @@ export const VoxScreen = () => {
   const silenceTimerRef = useRef(null);
   const latestTranscriptRef = useRef('');
   const isSubmittingRef = useRef(false);
-  const lastTriggerTimeRef = useRef(null);
 
   // Animated values for pulsing soundwave rings
   const pulseAnim = useRef(new Animated.Value(1)).current;
@@ -133,16 +133,6 @@ export const VoxScreen = () => {
       }
     };
   }, []);
-
-  /**
-   * Automatically start voice session when navigated with startVoice parameter.
-   */
-  useEffect(() => {
-    if (navParams?.startVoice && navParams?.triggerTime !== lastTriggerTimeRef.current) {
-      lastTriggerTimeRef.current = navParams.triggerTime;
-      startVoiceSession();
-    }
-  }, [navParams?.triggerTime, navParams?.startVoice]);
 
   const clearSilenceTimer = () => {
     if (silenceTimerRef.current) {
@@ -310,6 +300,231 @@ export const VoxScreen = () => {
   };
 
   /**
+   * Quick Command 1: Tasks Today
+   * Show or retrieve tasks due today from persistent storage, excluding completed tasks.
+   */
+  const handleTasksTodayCommand = async () => {
+    try {
+      setVoiceState('processing');
+      setErrorMessage(null);
+
+      const data = await getTasks({ status: 'pending', limit: 100 });
+      const tasks = data.tasks || [];
+
+      // Determine tasks due today in local time
+      const now = new Date();
+      const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+      const endOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+
+      const tasksToday = tasks.filter((t) => {
+        if (t.completed) return false;
+        const timeVal = t.dueDate || t.reminderTime;
+        if (!timeVal) return false;
+        const d = new Date(timeVal);
+        return d >= startOfDay && d <= endOfDay;
+      });
+
+      let responseText = '';
+      if (tasksToday.length === 0) {
+        responseText = "You have no pending tasks due today. You're all caught up!";
+      } else if (tasksToday.length === 1) {
+        const t = tasksToday[0];
+        const timeInfo = t.dueTimeText ? ` at ${t.dueTimeText}` : '';
+        responseText = `You have 1 task due today: "${t.title}"${timeInfo} (${t.category || 'Other'}).`;
+      } else {
+        const taskListStr = tasksToday
+          .map((t, idx) => `${idx + 1}. "${t.title}"${t.dueTimeText ? ` at ${t.dueTimeText}` : ''}`)
+          .join(', ');
+        responseText = `You have ${tasksToday.length} tasks due today: ${taskListStr}.`;
+      }
+
+      setAiResponse(responseText);
+      setVoiceHistory((prev) => [
+        ...prev,
+        { sender: 'user', text: 'Tasks Today' },
+        { sender: 'assistant', text: responseText },
+      ]);
+
+      setVoiceState('responding');
+      await speakAssistantResponse(responseText, {
+        onDone: () => {
+          setVoiceState('idle');
+          isSubmittingRef.current = false;
+        },
+        onError: () => {
+          setVoiceState('idle');
+          isSubmittingRef.current = false;
+        },
+      });
+    } catch (err) {
+      console.error('[VoxScreen Tasks Today Error]:', err);
+      const errMsg = 'Unable to fetch tasks due today. Please ensure the backend is running.';
+      setErrorMessage(errMsg);
+      setVoiceState('idle');
+      isSubmittingRef.current = false;
+    }
+  };
+
+  /**
+   * Quick Command 2: Last Chat
+   * Opens or restores the most recent saved conversation from MongoDB.
+   * If no previous conversation exists, shows a friendly empty-state message.
+   */
+  const handleLastChatCommand = async () => {
+    try {
+      setVoiceState('processing');
+      setErrorMessage(null);
+
+      const data = await getConversations({ limit: 1 });
+      const convs = data.conversations || [];
+
+      if (convs.length === 0) {
+        const emptyMsg = "You don't have any previous chat conversations saved yet. Start a new chat or tap the microphone to begin!";
+        setAiResponse(emptyMsg);
+        setVoiceHistory((prev) => [
+          ...prev,
+          { sender: 'user', text: 'Last Chat' },
+          { sender: 'assistant', text: emptyMsg },
+        ]);
+        setVoiceState('responding');
+        await speakAssistantResponse(emptyMsg, {
+          onDone: () => {
+            setVoiceState('idle');
+            isSubmittingRef.current = false;
+          },
+          onError: () => {
+            setVoiceState('idle');
+            isSubmittingRef.current = false;
+          },
+        });
+        return;
+      }
+
+      const latestConv = convs[0];
+      const fullConv = await getConversation(latestConv._id);
+
+      // Restore messages into Vox voiceHistory
+      if (Array.isArray(fullConv.messages)) {
+        const restored = fullConv.messages.map((m) => ({
+          sender: m.sender === 'user' ? 'user' : 'assistant',
+          text: m.text,
+        }));
+        setVoiceHistory(restored);
+      }
+
+      const restoredMsg = `Restored your last conversation: "${fullConv.title || 'Previous Chat'}". Opening chat...`;
+      setAiResponse(restoredMsg);
+      setVoiceState('idle');
+      isSubmittingRef.current = false;
+      stopSpeaking();
+
+      // Open the Chat screen with the restored conversation
+      navigate('chat', { conversationId: fullConv._id });
+    } catch (err) {
+      console.error('[VoxScreen Last Chat Error]:', err);
+      const errMsg = 'Unable to retrieve your last conversation. Please ensure the backend is running.';
+      setErrorMessage(errMsg);
+      setVoiceState('idle');
+      isSubmittingRef.current = false;
+    }
+  };
+
+  /**
+   * Quick Command 3: Next Up Task
+   * Retrieves the next upcoming pending task based on canonical sorting:
+   * Overdue tasks first (oldest overdue first), earliest pending next, undated last.
+   */
+  const handleNextUpTaskCommand = async () => {
+    try {
+      setVoiceState('processing');
+      setErrorMessage(null);
+
+      const data = await getTasks({ status: 'pending', limit: 100 });
+      const pendingTasks = (data.tasks || []).filter((t) => !t.completed);
+
+      if (pendingTasks.length === 0) {
+        const noTaskMsg = "You don't have any pending tasks right now. Great job!";
+        setAiResponse(noTaskMsg);
+        setVoiceHistory((prev) => [
+          ...prev,
+          { sender: 'user', text: 'Next Up Task' },
+          { sender: 'assistant', text: noTaskMsg },
+        ]);
+        setVoiceState('responding');
+        await speakAssistantResponse(noTaskMsg, {
+          onDone: () => {
+            setVoiceState('idle');
+            isSubmittingRef.current = false;
+          },
+          onError: () => {
+            setVoiceState('idle');
+            isSubmittingRef.current = false;
+          },
+        });
+        return;
+      }
+
+      const nowMs = Date.now();
+      const getTaskTime = (t) => {
+        const timeVal = t.dueDate || t.reminderTime;
+        if (!timeVal) return Infinity;
+        const ms = new Date(timeVal).getTime();
+        return isNaN(ms) ? Infinity : ms;
+      };
+
+      // Canonical sorting: Overdue (oldest overdue first), earliest pending next, undated last
+      const sorted = [...pendingTasks].sort((a, b) => {
+        const timeA = getTaskTime(a);
+        const timeB = getTaskTime(b);
+        const hasA = timeA !== Infinity ? 0 : 1;
+        const hasB = timeB !== Infinity ? 0 : 1;
+        if (hasA !== hasB) return hasA - hasB;
+        if (timeA !== timeB) return timeA - timeB;
+        return new Date(a.createdAt || 0).getTime() - new Date(b.createdAt || 0).getTime();
+      });
+
+      const nextTask = sorted[0];
+      const taskTime = getTaskTime(nextTask);
+      let responseText = '';
+
+      if (taskTime === Infinity) {
+        responseText = `Your next up task is "${nextTask.title}" (${nextTask.category || 'Other'}), with no specific due date set.`;
+      } else if (taskTime < nowMs) {
+        const timeStr = nextTask.dueTimeText || new Date(taskTime).toLocaleDateString();
+        responseText = `Your next up task is overdue: "${nextTask.title}" was due at ${timeStr} (${nextTask.category || 'Other'}).`;
+      } else {
+        const timeStr = nextTask.dueTimeText || new Date(taskTime).toLocaleDateString();
+        responseText = `Your next up task is "${nextTask.title}", due at ${timeStr} (${nextTask.category || 'Other'}).`;
+      }
+
+      setAiResponse(responseText);
+      setVoiceHistory((prev) => [
+        ...prev,
+        { sender: 'user', text: 'Next Up Task' },
+        { sender: 'assistant', text: responseText },
+      ]);
+
+      setVoiceState('responding');
+      await speakAssistantResponse(responseText, {
+        onDone: () => {
+          setVoiceState('idle');
+          isSubmittingRef.current = false;
+        },
+        onError: () => {
+          setVoiceState('idle');
+          isSubmittingRef.current = false;
+        },
+      });
+    } catch (err) {
+      console.error('[VoxScreen Next Up Task Error]:', err);
+      const errMsg = 'Unable to retrieve your next upcoming task. Please ensure the backend is running.';
+      setErrorMessage(errMsg);
+      setVoiceState('idle');
+      isSubmittingRef.current = false;
+    }
+  };
+
+  /**
    * Process recognized speech or text prompt through backend /api/chat.
    */
   const processVoiceInput = async (spokenQuery) => {
@@ -317,6 +532,43 @@ export const VoxScreen = () => {
     if (!trimmed) {
       setVoiceState('idle');
       isSubmittingRef.current = false;
+      return;
+    }
+
+    // Check if voice query matches any of the 3 quick voice commands
+    const normalized = trimmed.toLowerCase().replace(/[^a-z0-9\s]/g, '').trim();
+
+    if (
+      normalized === 'tasks today' ||
+      normalized === 'task today' ||
+      normalized === 'what are my tasks today' ||
+      normalized === 'my tasks today' ||
+      normalized === 'show tasks today' ||
+      normalized === 'upcoming tasks today'
+    ) {
+      handleTasksTodayCommand();
+      return;
+    }
+
+    if (
+      normalized === 'last chat' ||
+      normalized === 'open last chat' ||
+      normalized === 'restore last chat' ||
+      normalized === 'previous chat' ||
+      normalized === 'show last chat'
+    ) {
+      handleLastChatCommand();
+      return;
+    }
+
+    if (
+      normalized === 'next up task' ||
+      normalized === 'next task' ||
+      normalized === 'what is my next task' ||
+      normalized === 'next upcoming task' ||
+      normalized === 'show next task'
+    ) {
+      handleNextUpTaskCommand();
       return;
     }
 
@@ -351,8 +603,21 @@ export const VoxScreen = () => {
               title: op.task.title,
               body: op.task.description || `Task due at ${op.task.dueTimeText || 'scheduled time'}`,
               triggerDate: op.task.reminderTime,
+              category: op.task.category || 'Other',
             }).catch((e) => console.warn('[VoxScreen Reminder Schedule Error]:', e));
-          } else if (op.operation === 'cancel_task' && op.task?.notificationId) {
+          } else if (op.operation === 'reschedule_task') {
+            if (op.task?.hasReminder && op.task?.reminderTime) {
+              scheduleLocalReminder({
+                taskId: op.task._id,
+                title: op.task.title,
+                body: op.task.description || `Task due at ${op.task.dueTimeText || 'scheduled time'}`,
+                triggerDate: op.task.reminderTime,
+                category: op.task.category || 'Other',
+              }).catch((e) => console.warn('[VoxScreen Reschedule Notification Error]:', e));
+            } else if (op.task?.notificationId) {
+              cancelLocalReminder(op.task.notificationId).catch(() => {});
+            }
+          } else if ((op.operation === 'cancel_task' || op.operation === 'complete_task') && op.task?.notificationId) {
             cancelLocalReminder(op.task.notificationId).catch((e) =>
               console.warn('[VoxScreen Cancel Notification Error]:', e)
             );
@@ -659,9 +924,9 @@ export const VoxScreen = () => {
         </View>
       </View>
 
-      {/* Quick Voice Testing Prompts */}
+      {/* Quick Voice Commands */}
       <View style={styles.quickPromptsSection}>
-        <Text style={styles.quickPromptsTitle}>Quick Voice Commands (Spoken Aloud)</Text>
+        <Text style={styles.quickPromptsTitle}>Quick Voice Commands</Text>
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
@@ -669,38 +934,29 @@ export const VoxScreen = () => {
         >
           <TouchableOpacity
             style={styles.promptChip}
-            onPress={() => processVoiceInput('What are my upcoming tasks today?')}
+            onPress={handleTasksTodayCommand}
             activeOpacity={0.7}
           >
             <Ionicons name="checkbox-outline" size={14} color="#ff6b5b" />
-            <Text style={styles.promptChipText}>Tasks today</Text>
+            <Text style={styles.promptChipText}>Tasks Today</Text>
           </TouchableOpacity>
 
           <TouchableOpacity
             style={styles.promptChip}
-            onPress={() => processVoiceInput('Remind me tomorrow at 10 AM to call the dentist')}
+            onPress={handleLastChatCommand}
             activeOpacity={0.7}
           >
-            <Ionicons name="alarm-outline" size={14} color="#ff6b5b" />
-            <Text style={styles.promptChipText}>Set 10 AM reminder</Text>
+            <Ionicons name="chatbubbles-outline" size={14} color="#ff6b5b" />
+            <Text style={styles.promptChipText}>Last Chat</Text>
           </TouchableOpacity>
 
           <TouchableOpacity
             style={styles.promptChip}
-            onPress={() => processVoiceInput('Please remember that I prefer morning deep work')}
+            onPress={handleNextUpTaskCommand}
             activeOpacity={0.7}
           >
-            <Ionicons name="bookmark-outline" size={14} color="#ff6b5b" />
-            <Text style={styles.promptChipText}>Save memory</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.promptChip}
-            onPress={() => processVoiceInput('What do you remember about my preferences?')}
-            activeOpacity={0.7}
-          >
-            <Ionicons name="bulb-outline" size={14} color="#ff6b5b" />
-            <Text style={styles.promptChipText}>Recall memories</Text>
+            <Ionicons name="time-outline" size={14} color="#ff6b5b" />
+            <Text style={styles.promptChipText}>Next Up Task</Text>
           </TouchableOpacity>
         </ScrollView>
       </View>

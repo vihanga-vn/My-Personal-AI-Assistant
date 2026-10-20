@@ -1,6 +1,7 @@
 import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
 import { getApiBaseUrl } from '../config/api';
+import { getCategoryDetails } from '../config/categories';
 
 /**
  * Mobile Local Notification Service using Expo Notifications.
@@ -86,15 +87,17 @@ export async function requestNotificationPermissions() {
 
 /**
  * Schedule a one-time local phone notification for a task/reminder.
+ * Incorporates category-specific emojis and structured titles.
  *
  * @param {Object} params
  * @param {string} params.taskId - Database task ID
  * @param {string} params.title - Task or reminder title
- * @param {string} [params.body] - Optional message body
+ * @param {string} [params.body] - Optional message body or notes
  * @param {Date|string} params.triggerDate - When notification should fire
+ * @param {string} [params.category='Other'] - One of the 7 supported categories
  * @returns {Promise<{success: boolean, notificationId?: string, error?: string}>}
  */
-export async function scheduleLocalReminder({ taskId, title, body = '', triggerDate }) {
+export async function scheduleLocalReminder({ taskId, title, body = '', triggerDate, category = 'Other' }) {
   if (Platform.OS === 'web') {
     return { success: false, error: 'Notifications not supported on Web.' };
   }
@@ -115,24 +118,23 @@ export async function scheduleLocalReminder({ taskId, title, body = '', triggerD
   }
 
   try {
-    // Avoid duplicate scheduling: check if a notification for this taskId is already active
-    try {
-      const activeNotifications = await Notifications.getAllScheduledNotificationsAsync();
-      for (const item of activeNotifications) {
-        if (item.content?.data?.taskId === taskId) {
-          console.log(`[NotificationService] Cancelling existing duplicate notification ${item.identifier} for task ${taskId}`);
-          await Notifications.cancelScheduledNotificationAsync(item.identifier);
-        }
-      }
-    } catch (dupErr) {
-      console.warn('[NotificationService] Duplicate check skipped:', dupErr?.message || dupErr);
+    // Avoid duplicate scheduling: cancel any existing notification for this taskId
+    if (taskId) {
+      await cancelLocalReminderForTask(taskId);
     }
 
-    // Schedule the notification
+    // Resolve category details and category-specific emoji
+    const catDetails = getCategoryDetails(category);
+    const notificationTitle = `${catDetails.emoji} ${catDetails.label} Reminder`;
+    const notificationBody = body
+      ? `${title} — ${body}`
+      : `${title} is due now.`;
+
+    // Schedule the notification with category emoji in the title
     const content = {
-      title: `⏰ Reminder: ${title}`,
-      body: body || 'You have a scheduled task due now.',
-      data: { taskId },
+      title: notificationTitle,
+      body: notificationBody,
+      data: { taskId, category: catDetails.key },
       sound: 'default',
     };
 
@@ -174,6 +176,26 @@ export async function scheduleLocalReminder({ taskId, title, body = '', triggerD
       success: false,
       error: error.message || 'Failed to schedule local notification.',
     };
+  }
+}
+
+/**
+ * Cancel any scheduled local notifications for a specific task ID.
+ *
+ * @param {string} taskId
+ */
+export async function cancelLocalReminderForTask(taskId) {
+  if (!taskId || Platform.OS === 'web') return;
+  try {
+    const activeNotifications = await Notifications.getAllScheduledNotificationsAsync();
+    for (const item of activeNotifications) {
+      if (item.content?.data?.taskId === taskId) {
+        await Notifications.cancelScheduledNotificationAsync(item.identifier);
+        console.log(`[NotificationService] Cancelled notification ${item.identifier} for task ${taskId}`);
+      }
+    }
+  } catch (error) {
+    console.warn(`[NotificationService] Cancel for task ${taskId} error:`, error?.message || error);
   }
 }
 

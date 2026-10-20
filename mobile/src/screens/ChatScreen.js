@@ -17,7 +17,7 @@ import { colors } from '../theme/colors';
 import { typography } from '../theme/typography';
 import { spacing, radii } from '../theme/spacing';
 import { useNavigation } from '../navigation/NavigationContext';
-import { mockSuggestedPrompts } from '../data/mockData';
+import { SUGGESTED_PROMPTS } from '../config/categories';
 import { sendChatMessage } from '../services/chatService';
 import {
   getConversations,
@@ -28,7 +28,7 @@ import { scheduleLocalReminder, cancelLocalReminder } from '../services/notifica
 import { notifyTasksUpdated } from '../services/taskService';
 
 export const ChatScreen = () => {
-  const { navigate } = useNavigation();
+  const { navigate, navParams } = useNavigation();
 
   // Active Conversation State
   const [activeConversationId, setActiveConversationId] = useState(null);
@@ -110,22 +110,28 @@ export const ChatScreen = () => {
   };
 
   /**
-   * Initialize: load the most recent conversation or start fresh.
+   * Initialize: load requested conversation from navParams or the most recent conversation.
    */
   useEffect(() => {
     let isMounted = true;
     const initializeChat = async () => {
-      const list = await fetchConversationsList();
-      if (isMounted && list.length > 0) {
-        // Load the most recently active conversation
-        loadConversation(list[0]._id);
+      if (navParams?.conversationId) {
+        if (isMounted) {
+          loadConversation(navParams.conversationId);
+        }
+      } else {
+        const list = await fetchConversationsList();
+        if (isMounted && list.length > 0) {
+          // Load the most recently active conversation
+          loadConversation(list[0]._id);
+        }
       }
     };
     initializeChat();
     return () => {
       isMounted = false;
     };
-  }, []);
+  }, [navParams?.conversationId]);
 
   /**
    * Start a brand new conversation session.
@@ -207,8 +213,21 @@ export const ChatScreen = () => {
               title: op.task.title,
               body: op.task.description || `Due at ${op.task.dueTimeText || 'scheduled time'}`,
               triggerDate: op.task.reminderTime,
+              category: op.task.category || 'Other',
             }).catch((err) => console.warn('[ChatScreen Notification Error]:', err));
-          } else if (op.operation === 'cancel_task' && op.task?.notificationId) {
+          } else if (op.operation === 'reschedule_task') {
+            if (op.task?.hasReminder && op.task?.reminderTime) {
+              scheduleLocalReminder({
+                taskId: op.task._id,
+                title: op.task.title,
+                body: op.task.description || `Due at ${op.task.dueTimeText || 'scheduled time'}`,
+                triggerDate: op.task.reminderTime,
+                category: op.task.category || 'Other',
+              }).catch((err) => console.warn('[ChatScreen Reschedule Notification Error]:', err));
+            } else if (op.task?.notificationId) {
+              cancelLocalReminder(op.task.notificationId).catch(() => {});
+            }
+          } else if ((op.operation === 'cancel_task' || op.operation === 'complete_task') && op.task?.notificationId) {
             cancelLocalReminder(op.task.notificationId).catch((err) =>
               console.warn('[ChatScreen Cancel Notification Error]:', err)
             );
@@ -414,7 +433,7 @@ export const ChatScreen = () => {
                   showsHorizontalScrollIndicator={false}
                   contentContainerStyle={styles.quickPromptsList}
                 >
-                  {mockSuggestedPrompts.map((prompt, idx) => (
+                  {SUGGESTED_PROMPTS.map((prompt, idx) => (
                     <TouchableOpacity
                       key={idx}
                       style={[styles.promptChip, isThinking && styles.promptChipDisabled]}

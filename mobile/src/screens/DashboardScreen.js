@@ -14,7 +14,11 @@ import { colors } from '../theme/colors';
 import { typography } from '../theme/typography';
 import { spacing, radii } from '../theme/spacing';
 import { useNavigation } from '../navigation/NavigationContext';
-import { EVENT_CATEGORIES } from '../data/mockData';
+import {
+  TASK_CATEGORIES,
+  getCategoryDetails,
+  getCategoryEmoji,
+} from '../config/categories';
 import { getTasks, onTasksUpdated } from '../services/taskService';
 
 export const DashboardScreen = () => {
@@ -53,41 +57,34 @@ export const DashboardScreen = () => {
     fetchDashboardData(false);
   };
 
-  // Derive metrics from real task records
+  // Derive metrics from real task records (Never mock data)
   const pendingTasks = tasks.filter((t) => !t.completed);
   const completedTasks = tasks.filter((t) => t.completed);
 
-  // Determine earliest upcoming pending task
-  const nextTask = pendingTasks
-    .slice()
-    .sort((a, b) => {
-      const timeA = a.dueDate
-        ? new Date(a.dueDate).getTime()
-        : a.reminderTime
-        ? new Date(a.reminderTime).getTime()
-        : Infinity;
-      const timeB = b.dueDate
-        ? new Date(b.dueDate).getTime()
-        : b.reminderTime
-        ? new Date(b.reminderTime).getTime()
-        : Infinity;
-      return timeA - timeB;
-    })[0];
-
-  const getCategoryDetails = (catName) => {
-    return (
-      EVENT_CATEGORIES.find(
-        (c) => c.key.toLowerCase() === (catName || '').toLowerCase()
-      ) || {
-        key: catName || 'Other',
-        label: catName || 'Other',
-        color: '#fde047',
-        bgColor: 'rgba(253, 224, 71, 0.22)',
-        borderColor: 'rgba(253, 224, 71, 0.55)',
-        icon: 'ellipsis-horizontal-circle-outline',
+  // Determine earliest upcoming pending task using canonical sorting rules:
+  // 1. Earliest due date and time first
+  // 2. Overdue pending tasks ordered oldest to newest overdue
+  // 3. Completed tasks excluded
+  // 4. Undated tasks at the end
+  const sortedPending = pendingTasks.slice().sort((a, b) => {
+    const getTaskTime = (t) => {
+      if (t.dueDate) {
+        const ms = new Date(t.dueDate).getTime();
+        if (!isNaN(ms)) return ms;
       }
-    );
-  };
+      if (t.reminderTime) {
+        const ms = new Date(t.reminderTime).getTime();
+        if (!isNaN(ms)) return ms;
+      }
+      return Infinity;
+    };
+    const timeA = getTaskTime(a);
+    const timeB = getTaskTime(b);
+    if (timeA !== timeB) return timeA - timeB;
+    return new Date(a.createdAt || 0).getTime() - new Date(b.createdAt || 0).getTime();
+  });
+
+  const nextTask = sortedPending[0];
 
   return (
     <View style={styles.container}>
@@ -191,7 +188,7 @@ export const DashboardScreen = () => {
           </View>
 
           <View style={styles.categoryGrid}>
-            {EVENT_CATEGORIES.map((cat) => {
+            {TASK_CATEGORIES.map((cat) => {
               const count = pendingTasks.filter(
                 (t) => (t.category || '').toLowerCase() === cat.key.toLowerCase()
               ).length;
@@ -243,7 +240,7 @@ export const DashboardScreen = () => {
                     </View>
                   </View>
 
-                  <Text style={styles.categoryTitle}>{cat.label}</Text>
+                  <Text style={styles.categoryTitle}>{cat.emoji} {cat.label}</Text>
 
                   <Text
                     style={[styles.categoryCountLabel, { color: cat.color }]}
@@ -314,7 +311,7 @@ export const DashboardScreen = () => {
                       ]}
                     >
                       <Text style={[styles.tagText, { color: cat.color }]}>
-                        {nextTask.category || 'General'}
+                        {cat.emoji} {cat.label}
                       </Text>
                     </View>
                   </View>

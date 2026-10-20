@@ -2,11 +2,58 @@ const mongoose = require('mongoose');
 const Conversation = require('../models/Conversation');
 const { isDBConnected } = require('../config/db');
 
+const MAX_CONVERSATIONS_PER_USER = 20;
+
 // In-memory fallback store for offline / mock testing resilience
 const inMemoryConversations = new Map();
 
 function isValidObjectId(id) {
   return mongoose.Types.ObjectId.isValid(id);
+}
+
+/**
+ * Enforce the 20-conversation limit per user.
+ * Deletes the oldest conversations (ordered by createdAt) for the specified user
+ * until only the 20 newest conversations remain in persistent MongoDB storage.
+ */
+async function pruneOldConversations(userId = 'default_user') {
+  if (isDBConnected()) {
+    try {
+      // Find the 20 newest conversation IDs for this user, sorted by createdAt descending
+      const newestDocs = await Conversation.find({ userId })
+        .sort({ createdAt: -1 })
+        .limit(MAX_CONVERSATIONS_PER_USER)
+        .select('_id')
+        .lean();
+
+      if (newestDocs.length >= MAX_CONVERSATIONS_PER_USER) {
+        const keepIds = newestDocs.map((doc) => doc._id);
+        const result = await Conversation.deleteMany({
+          userId,
+          _id: { $nin: keepIds },
+        });
+        if (result.deletedCount > 0) {
+          console.log(
+            `[ConversationService] Pruned ${result.deletedCount} old conversations for user "${userId}" (enforcing ${MAX_CONVERSATIONS_PER_USER} limit).`
+          );
+        }
+      }
+    } catch (err) {
+      console.error('[ConversationService pruneOldConversations Error]:', err.message);
+    }
+  } else {
+    // In-memory fallback
+    const userConvs = Array.from(inMemoryConversations.values())
+      .filter((c) => c.userId === userId)
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+    if (userConvs.length > MAX_CONVERSATIONS_PER_USER) {
+      const toRemove = userConvs.slice(MAX_CONVERSATIONS_PER_USER);
+      for (const conv of toRemove) {
+        inMemoryConversations.delete(String(conv._id));
+      }
+    }
+  }
 }
 
 /**
@@ -33,8 +80,9 @@ function formatCurrentTime() {
 
 /**
  * List all saved conversations for a user, sorted by most recent first.
+ * Default limit is 20 to align with conversation storage limit.
  */
-async function listConversations({ userId = 'default_user', limit = 50, skip = 0 } = {}) {
+async function listConversations({ userId = 'default_user', limit = 20, skip = 0 } = {}) {
   const filter = { userId };
 
   if (isDBConnected()) {
@@ -146,6 +194,8 @@ async function createConversation({
     try {
       const conversation = new Conversation(conversationData);
       const saved = await conversation.save();
+      // Enforce the 20-conversation limit per user by removing oldest conversations
+      await pruneOldConversations(userId);
       return saved.toObject();
     } catch (err) {
       console.error('[ConversationService createConversation Error]:', err.message);
@@ -161,6 +211,7 @@ async function createConversation({
       updatedAt: now,
     };
     inMemoryConversations.set(id, saved);
+    await pruneOldConversations(userId);
     return saved;
   }
 }
@@ -306,6 +357,8 @@ async function deleteConversation(id) {
 }
 
 module.exports = {
+  MAX_CONVERSATIONS_PER_USER,
+  pruneOldConversations,
   listConversations,
   getConversationById,
   createConversation,

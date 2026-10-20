@@ -69,7 +69,7 @@ export const TabBar = () => {
               <TouchableOpacity
                 key={tab.key}
                 style={styles.centerTabButton}
-                onPress={() => navigate(tab.key, { startVoice: true, triggerTime: Date.now() })}
+                onPress={() => navigate(tab.key)}
                 activeOpacity={0.8}
                 accessibilityRole="tab"
                 accessibilityState={{ selected: isActive }}
