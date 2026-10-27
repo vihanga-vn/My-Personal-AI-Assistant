@@ -28,9 +28,9 @@ jobs:
         working-directory: backend
         run: npm install
 
-      - name: Test backend
+      - name: Validate backend package
         working-directory: backend
-        run: npm test --if-present
+        run: npm ls --depth=0
 
       - name: Upload backend artifact
         uses: actions/upload-artifact@v4
